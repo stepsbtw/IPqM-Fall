@@ -1,0 +1,10 @@
+joblib
+numpy
+pandas
+plotly
+pyarrow
+scikit-learn
+streamlit
+streamlit-shortcuts
+torch
+tqdm
