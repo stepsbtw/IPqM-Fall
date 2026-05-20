@@ -4,5 +4,5 @@ __pycache__
 IPqM-Fall
 checkpoints
 checkpoints_logreg
-checkpoints_logreg
+checkpoints_cnn1d
 results
