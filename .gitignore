@@ -7,3 +7,5 @@ checkpoints_*
 results
 results_*
 .vscode
+dataset
+windowed
