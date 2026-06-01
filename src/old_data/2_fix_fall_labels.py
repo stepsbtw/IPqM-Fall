@@ -5,7 +5,8 @@ from tqdm import tqdm
 
 TRIALS_ROOT = Path("IPqM-Fall/raw")
 META_FILE = "IPqM-Fall/windows.parquet"
-OUTPUT_FILE = "IPqM-Fall/windows_fall_fixed.parquet"
+#OUTPUT_FILE = "IPqM-Fall/windows_fall_fixed.parquet"
+OUTPUT_FILE = "IPqM-Fall/windows.parquet"
 
 FS = 90
 PRE_SECONDS = 0.5

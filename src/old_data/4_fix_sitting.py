@@ -4,8 +4,10 @@ from pathlib import Path
 from tqdm import tqdm
 
 TRIALS_ROOT = Path("IPqM-Fall/raw")
-META_FILE = "IPqM-Fall/windows_mo_fixed.parquet" 
-OUTPUT_FILE = "IPqM-Fall/windows_final.parquet"
+#META_FILE = "IPqM-Fall/windows_mo_fixed.parquet" 
+#OUTPUT_FILE = "IPqM-Fall/windows_final.parquet"
+META_FILE = "IPqM-Fall/windows.parquet"
+OUTPUT_FILE = "IPqM-Fall/windows.parquet"
 
 FS = 90
 STATIC_THRESHOLD = 0.3

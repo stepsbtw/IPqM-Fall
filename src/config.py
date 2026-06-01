@@ -8,7 +8,7 @@ PIN_MEMORY = True
 
 MODEL_TYPE = "CNN"  
 
-DATASET_DIR = Path("IPqM-Fall/windowed_synchronized")
+DATASET_DIR = Path("IPqM-Fall/windowed")
 RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
 

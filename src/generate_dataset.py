@@ -67,10 +67,18 @@ print(f"Descartadas {initial_len - len(windows_df)} janelas UNKNOWN.")
 unique_labels = sorted(windows_df["label"].unique())
 DICT_COMPLETE = {label: idx for idx, label in enumerate(unique_labels)}
 
+trial_num = windows_df["file"].apply(
+    lambda x: Path(x).stem.rsplit("_TRIAL", 1)[1]
+)
+
 windows_df["sync_id"] = (
-    windows_df["subject_id"].astype(str) + "_" +
-    windows_df["file"].apply(lambda x: Path(x).stem).str.replace("_combined", "", regex=False) +
-    "_win_" + windows_df["start_idx"].astype(str)
+    windows_df["subject_id"].astype(str)
+    + "_"
+    + windows_df["activity_code"].astype(str)
+    + "_TRIAL"
+    + trial_num
+    + "_win_"
+    + windows_df["start_idx"].astype(str)
 )
 
 grouped = windows_df.groupby("sync_id")

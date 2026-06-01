@@ -2,7 +2,6 @@ import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
 import time
-import re
 
 TRIALS_ROOT = Path("IPqM-Fall/raw")
 
@@ -68,8 +67,6 @@ LABEL_MAPPING = {
     "FALL5R": "LATERAL-FALL-LEFT-RIFLE"
 }
 
-CODE_REGEX = re.compile(r"\b(ADL\d+R?|MO\d+R?|FALL\d+R?)(?:_|$)")
-
 rows = []
 trial_files = sorted(TRIALS_ROOT.rglob("*.parquet"))
 
@@ -85,20 +82,15 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
     if len(df) < WINDOW_SIZE:
         continue
 
-    subject_id = parquet_file.parent.parent.name
-    sensor_pos = parquet_file.parent.name
+    # raw/ID1/CHEST/ADL1/ID1_CHEST_ADL1_TRIAL1.parquet
+
+    subject_id = parquet_file.parents[2].name
+    sensor_pos = parquet_file.parents[1].name
+
     rel_path = parquet_file.relative_to(TRIALS_ROOT).as_posix()
 
-    stem = parquet_file.stem
-
-    match = CODE_REGEX.search(stem)
-
-    if match:
-        activity_code = match.group(1)
-        initial_label = LABEL_MAPPING.get(activity_code, "UNKNOWN")
-    else:
-        activity_code = "UNKNOWN"
-        initial_label = "UNKNOWN"
+    activity_code = parquet_file.parent.name
+    initial_label = LABEL_MAPPING.get(activity_code, "UNKNOWN")
 
     n_windows = ((len(df) - WINDOW_SIZE) // STRIDE) + 1
 
@@ -107,12 +99,7 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
         start = i * STRIDE
         end = start + WINDOW_SIZE
 
-        window_id = (
-            f"{subject_id}_"
-            f"{sensor_pos}_"
-            f"{parquet_file.stem}_"
-            f"win_{i:06d}"
-        )
+        window_id = f"{parquet_file.stem}_win_{i:06d}"
 
         rows.append({
             "file": rel_path,
@@ -137,11 +124,7 @@ meta = meta.sort_values(
 meta.to_parquet("IPqM-Fall/windows.parquet", index=False)
 
 print(f"\nTrials processed : {len(trial_files)}")
-print(f"Windows created   : {len(meta)}")
-print(f"Elapsed time      : {elapsed:.2f} sec\n")
+print(f"Windows created  : {len(meta)}")
+print(f"Elapsed time     : {elapsed:.2f} sec\n")
 
-print("Label distribution:\n")
-print(meta["label"].value_counts().sort_index())
-
-print("\nSample:\n")
 print(meta.head())
