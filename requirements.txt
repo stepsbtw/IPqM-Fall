@@ -4,7 +4,7 @@ pandas
 plotly
 pyarrow
 scikit-learn
-streamlit
-streamlit-shortcuts
-torch
+# streamlit
+# streamlit-shortcuts
+torch # if needed, install accordingly to your cuda version
 tqdm
