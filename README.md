@@ -1,22 +1,18 @@
 # IPqM-Fall: Real-Time Military Activity Recognition and Fall Detection with Wearable Inertial Sensors
 
-This repository contains the official machine learning pipeline for the **IPqM-Fall** dataset. Designed for tactical and military environments, the pipeline supports Human Activity Recognition (HAR) and Fall Detection using wearable IMU sensors positioned on the chest and wrists.
+This repository contains the official machine learning pipeline for the **IPqM-Fall** dataset. Designed for tactical and military environments, it supports Human Activity Recognition (HAR) and Fall Detection using wearable inertial measurement units (IMUs) positioned on the chest and both wrists.
 
-To simplify reproduction, this repository includes a curated `windows.parquet` file containing all window boundaries and validated labels. Users only need to download the raw dataset and run the final dataset generation step before training.
+To simplify reproducibility, this repository includes a curated `windows.parquet` file containing validated window boundaries and labels. As a result, users can immediately generate machine learning datasets without running the original preprocessing pipeline.
 
----
+## 1. Getting Started
 
-# Dataset Download
+The raw continuous IMU recordings are hosted on Zenodo. To reproduce the experiments, first download the dataset and place the files in the expected directory structure.
 
-The raw continuous IMU recordings are hosted on Zenodo.
+### 1.1 Download and Organize the Dataset
 
-## Download Instructions
-
-1. Download the raw dataset from Zenodo:
-
-   **Zenodo:** `doi.org/10.5281/zenodo.20431609`
-
-2. Extract the dataset so that the project structure becomes:
+1. Download the raw dataset from Zenodo: `doi.org/10.5281/zenodo.20431609`.
+2. Extract the downloaded archive.
+3. Organize the files as follows:
 
 ```text
 project_root/
@@ -30,162 +26,112 @@ project_root/
 └── README.md
 ```
 
-The repository already includes:
+The `windows.parquet` file is provided by this repository and contains the validated segmentation and labeling information required for training. Therefore, the original preprocessing scripts are not required for standard use.
 
-```text
-IPqM-Fall/windows.parquet
-```
+### 1.2 Generate Training Arrays
 
-which contains:
-
-* Window start indices
-* Window end indices
-* Corrected activity labels
-* Fall refinements
-* Transition refinements
-
-Therefore, users do **not** need to run the original preprocessing pipeline.
-
----
-
-# Generate Training Arrays
-
-Generate the machine learning datasets using:
+After the dataset has been placed in the correct location, generate the NumPy arrays used for training and evaluation:
 
 ```bash
 python src/generate_dataset.py
 ```
 
-The script uses:
+This script creates the sensor tensors (`X_chest.npy`, `X_left.npy`, and `X_right.npy`), subject identifiers for Leave-One-Subject-Out (LOSO) cross-validation, and the label arrays required for the supported recognition tasks, including fall detection and posture classification.
 
-* `IPqM-Fall/raw/`
-* `IPqM-Fall/windows.parquet`
+## 2. Training and Evaluation
 
-to generate:
+The repository provides a unified framework for evaluating both classical machine learning and deep learning approaches using LOSO cross-validation. To facilitate comparison with previous work, the implemented architectures and their initial hyperparameters were adopted from the original publications and are provided as baseline configurations. These settings have not yet been systematically optimized for the IPqM-Fall dataset.
 
-```text
-X_chest.npy
-X_left.npy
-X_right.npy
+The framework includes both classical machine learning baselines and neural-network-based approaches commonly used in wearable sensing research.
 
-y_detect_fall.npy
-y_detect_movement.npy
-y_classify_fall.npy
-y_classify_posture.npy
-y_classify_movement.npy
-y_complete.npy
+### Supported Architectures
 
-groups.npy
-```
+#### Classical Machine Learning
 
-## Multi-Head Labeling Schema
-
-| Task                | Description                       |
-| ------------------- | --------------------------------- |
-| `detect_fall`       | Binary fall detection             |
-| `detect_movement`   | Movement vs static classification |
-| `classify_fall`     | Fall type classification          |
-| `classify_posture`  | Static posture classification     |
-| `classify_movement` | Dynamic activity classification   |
-| `complete`          | Complete activity taxonomy        |
-
-The file `groups.npy` contains subject identifiers used for Leave-One-Subject-Out (LOSO) evaluation.
-
----
-
-# Machine Learning Pipeline
-
-The repository provides a unified framework for training and evaluating both classical machine learning and deep learning models.
-
-## Configuration
-
-Experiment settings are centralized in:
-
-```text
-src/config.py
-```
-
-including model selection, training hyperparameters, and dataset paths.
-
-## Supported Models
-
-### Classical Machine Learning
-
-* Support Vector Machine (SVM)
-* Random Forest (RF)
+* Support Vector Machines (SVM)
+* Random Forests (RF)
 * K-Nearest Neighbors (KNN)
 
-### Deep Learning
+These models serve as established baselines for fall detection and activity recognition using wearable sensor data.
 
-* CNN1Conv
-* DeepConvLSTM
-* LSTM
-* MLP
+#### Deep Learning
 
-## Training
+* **CNN1Conv**: A lightweight convolutional architecture designed for accelerometer-based fall detection.
+* **DeepConvLSTM**: A hybrid architecture that combines convolutional feature extraction with recurrent temporal modeling.
+* **LSTM** and **MLP**
 
-Run:
+### Sensor Fusion
+
+The framework supports both early and late sensor fusion strategies.
+
+In the early-fusion configuration, signals from the chest and wrist sensors are combined before being presented to the model, allowing cross-sensor relationships to be learned directly from the data.
+
+In the late-fusion configuration, independent models are trained on each sensor stream and their predictions are aggregated through ensemble methods such as majority voting. This approach can improve robustness when individual sensors become unreliable or unavailable.
+
+### Multi-Task and Multi-Model Learning
+
+The framework can be configured either as a collection of task-specific models or as a unified multi-task learning (MTL) system.
+
+In the multi-model configuration, separate networks are trained for each prediction task, such as binary fall detection and posture classification. In the MTL configuration, a shared feature-extraction backbone feeds multiple task-specific output heads, reducing parameter count and inference cost while maintaining a single deployment model.
+
+### Training
+
+Model training, evaluation, class weighting, metric reporting, and fusion handling are managed through a centralized training script:
 
 ```bash
 python src/train.py
 ```
 
-The framework automatically:
+Experiment settings, model selection, paths, and training parameters can be configured in:
 
-* Performs Leave-One-Subject-Out (LOSO) cross-validation
-* Supports single-sensor, early-fusion, and late-fusion configurations
-* Applies class weighting and early stopping for deep learning models
-* Extracts statistical features automatically for classical models
+```text
+src/config.py
+```
 
-## Evaluation Metrics
+The training pipeline reports standard evaluation metrics including Accuracy, Precision, Recall, F1-score, and Confusion Matrices under LOSO cross-validation.
 
-The pipeline reports:
+## 3. Deployment
 
-* Accuracy
-* Precision
-* Recall
-* F1-Score
-* Confusion Matrix
-
-Results are automatically saved for later analysis.
-
----
-
-# Edge Deployment
-
-Convert trained PyTorch models to TensorFlow Lite:
+Trained PyTorch models can be converted to optimized INT8 TensorFlow Lite models for deployment on smartphones, embedded devices, and wearable platforms.
 
 ```bash
 python src/extra/tflite_converter.py
 ```
 
-Conversion pipeline:
+The conversion workflow follows:
 
 ```text
-PyTorch → ONNX → TensorFlow → INT8 TFLite
+PyTorch → ONNX → TensorFlow → INT8 TensorFlow Lite
 ```
 
-for deployment on smartphones and wearable devices.
+## 4. Reproducibility and Citation
 
----
-
-# Reproducibility
-
-The repository also includes the original preprocessing scripts used to generate `windows.parquet`:
-
-```text
-src/data_scripts/
-├── 1_generate_windows.py
-├── 2_fix_fall_labels.py
-├── 3_fix_transitions.py
-├── 4_fix_sitting.py
-└── 5_generate_dataset.py
-```
-
-Scripts 1–4 were used to create the curated `windows.parquet` file and are provided for transparency and reproducibility. They are **not required** for standard usage.
-
----
-
-# Citation
+The original preprocessing scripts (`src/data_scripts/1_generate_windows.py`, etc.) are included for transparency and reproducibility purposes. However, they are not required for standard usage because the validated window definitions are already distributed through `windows.parquet`.
 
 If you use the IPqM-Fall dataset or this repository in academic work, please cite the accompanying publication and Zenodo dataset release.
+
+### References for Baseline Architectures
+
+#### [CNN1Conv]
+
+Santos, G. L., Endo, P. T., Monteiro, K. H. d. C., Rocha, E. S., Silva, I., & Lynn, T. (2019). *Accelerometer-Based Human Fall Detection Using Convolutional Neural Networks*. *Sensors*, 19(7), 1644.
+
+DOI: [10.3390/s19071644](https://doi.org/10.3390/s19071644)
+
+#### [DeepConvLSTM]
+
+Ordóñez, F., & Roggen, D. (2016). *Deep Convolutional and LSTM Recurrent Neural Networks for Multimodal Wearable Activity Recognition*. *Sensors*, 16(1), 115.
+
+DOI: [10.3390/s16010115](https://doi.org/10.3390/s16010115)
+
+#### [Classical/Sensor Placement]
+
+Özdemir, A. T. (2016). *An Analysis on Sensor Locations of the Human Body for Wearable Fall Detection Devices: Principles and Practice*. *Sensors*, 16(8), 1161.
+
+DOI: [10.3390/s16081161](https://doi.org/10.3390/s16081161)
+
+#### [Classical/Multimodal Baseline]
+
+Martínez-Villaseñor, L., Ponce, H., Brieva, J., Moya-Albor, E., Núñez-Martínez, J., & Peñafort-Asturiano, C. (2019). *UP-Fall Detection Dataset: A Multimodal Approach*. *Sensors*, 19(9), 1988.
+
+DOI: [10.3390/s19091988](https://doi.org/10.3390/s19091988)
