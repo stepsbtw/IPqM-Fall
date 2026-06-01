@@ -4,7 +4,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 
-import src.config as config
+import config
 
 def get_classical_model():
     if config.MODEL_TYPE == "SVM":
@@ -16,7 +16,7 @@ def get_classical_model():
     raise ValueError(f"Modelo clássico {config.MODEL_TYPE} não reconhecido.")
 
 class CNN1Conv(nn.Module):
-    def __init__(self, num_features):
+    def __init__(self, num_features, num_classes):
         super().__init__()
         self.features = nn.Sequential(
             nn.Conv1d(num_features, 64, kernel_size=4, padding=2), nn.ReLU(),
@@ -25,13 +25,13 @@ class CNN1Conv(nn.Module):
         pool_out_length = (config.WINDOW_SAMPLES + 2 * 2 - 4 + 1) // 3
         self.classifier = nn.Sequential(
             nn.Flatten(), nn.Linear(64 * pool_out_length, 64), nn.ReLU(),
-            nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, config.NUM_CLASSES)
+            nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, num_classes)
         )
     def forward(self, x):
         return self.classifier(self.features(x))
 
 class DeepConvLSTM(nn.Module):
-    def __init__(self, num_features):
+    def __init__(self, num_features, num_classes):
         super().__init__()
         self.conv_block = nn.Sequential(
             nn.Conv1d(num_features, 64, kernel_size=5, padding=2), nn.ReLU(),
@@ -41,24 +41,24 @@ class DeepConvLSTM(nn.Module):
         )
         self.lstm = nn.LSTM(input_size=64, hidden_size=128, num_layers=2, batch_first=True, dropout=config.DROPOUT_HYBRID)
         self.dropout = nn.Dropout(config.DROPOUT_HYBRID)
-        self.classifier = nn.Linear(128, config.NUM_CLASSES)
+        self.classifier = nn.Linear(128, num_classes) # Dynamic output
     def forward(self, x):
         x = self.conv_block(x).permute(0, 2, 1)
         lstm_out, _ = self.lstm(x)
         return self.classifier(self.dropout(lstm_out[:, -1, :]))
 
 class LSTMModel(nn.Module):
-    def __init__(self, num_features):
+    def __init__(self, num_features, num_classes):
         super().__init__()
         self.lstm = nn.LSTM(input_size=num_features, hidden_size=200, num_layers=2, batch_first=True, dropout=config.DROPOUT)
-        self.classifier = nn.Sequential(nn.Linear(200, 200), nn.ReLU(), nn.Dropout(config.DROPOUT), nn.Linear(200, config.NUM_CLASSES))
+        self.classifier = nn.Sequential(nn.Linear(200, 200), nn.ReLU(), nn.Dropout(config.DROPOUT), nn.Linear(200, num_classes)) # Dynamic output
     def forward(self, x):
         _, (hidden, _) = self.lstm(x)
         return self.classifier(hidden[-1])
 
 class MLP(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, num_classes):
         super().__init__()
-        self.network = nn.Sequential(nn.Linear(input_size, 100), nn.ReLU(), nn.Linear(100, config.NUM_CLASSES))
+        self.network = nn.Sequential(nn.Linear(input_size, 100), nn.ReLU(), nn.Linear(100, num_classes)) # Dynamic output
     def forward(self, x):
         return self.network(x)
