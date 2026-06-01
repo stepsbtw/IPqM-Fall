@@ -4,10 +4,6 @@ from tqdm import tqdm
 import time
 import re
 
-# =========================================================
-# CONFIG
-# =========================================================
-
 TRIALS_ROOT = Path("IPqM-Fall/raw")
 
 WINDOW_SEC = 2
@@ -16,10 +12,6 @@ FS = 90
 
 WINDOW_SIZE = WINDOW_SEC * FS
 STRIDE = STRIDE_SEC * FS
-
-# =========================================================
-# LABEL TRANSLATION
-# =========================================================
 
 LABEL_MAPPING = {
     "ADL1": "STANDING",
@@ -76,15 +68,7 @@ LABEL_MAPPING = {
     "FALL5R": "LATERAL-FALL-LEFT-RIFLE"
 }
 
-# =========================================================
-# SAFE REGEX (FIXED)
-# =========================================================
-
 CODE_REGEX = re.compile(r"\b(ADL\d+R?|MO\d+R?|FALL\d+R?)(?:_|$)")
-
-# =========================================================
-# PROCESS
-# =========================================================
 
 rows = []
 trial_files = sorted(TRIALS_ROOT.rglob("*.parquet"))
@@ -93,9 +77,6 @@ start_time = time.time()
 
 for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
 
-    # -------------------------
-    # SAFE LOAD
-    # -------------------------
     try:
         df = pd.read_parquet(parquet_file)
     except Exception:
@@ -104,9 +85,6 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
     if len(df) < WINDOW_SIZE:
         continue
 
-    # -------------------------
-    # METADATA
-    # -------------------------
     subject_id = parquet_file.parent.parent.name
     sensor_pos = parquet_file.parent.name
     rel_path = parquet_file.relative_to(TRIALS_ROOT).as_posix()
@@ -122,9 +100,6 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
         activity_code = "UNKNOWN"
         initial_label = "UNKNOWN"
 
-    # -------------------------
-    # WINDOWING
-    # -------------------------
     n_windows = ((len(df) - WINDOW_SIZE) // STRIDE) + 1
 
     for i in range(n_windows):
@@ -132,7 +107,6 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
         start = i * STRIDE
         end = start + WINDOW_SIZE
 
-        # UNIQUE SAFE ID (FIXED)
         window_id = (
             f"{subject_id}_"
             f"{sensor_pos}_"
@@ -152,10 +126,6 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
             "reviewed": False
         })
 
-# =========================================================
-# FINAL DATASET
-# =========================================================
-
 elapsed = time.time() - start_time
 
 meta = pd.DataFrame(rows)
@@ -165,10 +135,6 @@ meta = meta.sort_values(
 )
 
 meta.to_parquet("IPqM-Fall/windows.parquet", index=False)
-
-# =========================================================
-# SUMMARY
-# =========================================================
 
 print(f"\nTrials processed : {len(trial_files)}")
 print(f"Windows created   : {len(meta)}")

@@ -44,4 +44,4 @@ LABEL_MAPPINGS = {
     "y_classify_fall": LABELS["FALLS"],
     "y_classify_movement": LABELS["MOVEMENTS"],
     "y_classify_posture": LABELS["STATIC_POSTURE"],
-}p
+}

@@ -14,24 +14,21 @@ if __name__ == "__main__":
     X_chest, X_left, X_right = np.load(config.DATASET_DIR/"X_chest.npy"), np.load(config.DATASET_DIR/"X_left.npy"), np.load(config.DATASET_DIR/"X_right.npy")
     y, groups = np.load(config.DATASET_DIR/"y.npy"), np.load(config.DATASET_DIR/"groups.npy")
 
-    # Todas as topologias de Early Fusion + Modelos Individuais
     models_data = {
         "CHEST": X_chest, "LEFT": X_left, "RIGHT": X_right,
         "CHEST_LEFT": np.concatenate((X_chest, X_left), axis=2),
         "CHEST_RIGHT": np.concatenate((X_chest, X_right), axis=2),
         "LEFT_RIGHT": np.concatenate((X_left, X_right), axis=2),
-        "ALL": np.concatenate((X_chest, X_left, X_right), axis=2)
+        "CHEST_LEFT_RIGHT": np.concatenate((X_chest, X_left, X_right), axis=2)
     }
 
-    # Inicializa os resultados para Early Fusion
     results = {name: {"folds": []} for name in models_data.keys()}
     
-    # Adiciona as chaves para armazenar os resultados do Late Fusion (Ensembles)
     late_fusions_map = {
         "ENSEMBLE_CHEST_LEFT": ["CHEST", "LEFT"],
         "ENSEMBLE_CHEST_RIGHT": ["CHEST", "RIGHT"],
         "ENSEMBLE_LEFT_RIGHT": ["LEFT", "RIGHT"],
-        "ENSEMBLE_ALL": ["CHEST", "LEFT", "RIGHT"]
+        "ENSEMBLE_CHEST_LEFT_RIGHT": ["CHEST", "LEFT", "RIGHT"]
     }
     for fusion_name in late_fusions_map.keys():
         results[fusion_name] = {"folds": []}
@@ -43,7 +40,6 @@ if __name__ == "__main__":
         test_subject = groups[test_idx][0]
         fold_probs = {}
 
-        # 1. Treina/Avalia os modelos individuais e as fusões iniciais (Early Fusion)
         for model_name, X_data in models_data.items():
             save_dir = config.CHECKPOINT_DIR / model_name
             save_dir.mkdir(exist_ok=True)
@@ -57,9 +53,7 @@ if __name__ == "__main__":
             metrics.update({"fold": fold_number, "test_subject": str(test_subject)})
             results[model_name]["folds"].append(metrics)
 
-        # 2. LATE FUSION (Soft Voting) iterativo para cada combinação
         for fusion_name, sensors in late_fusions_map.items():
-            # Soma as probabilidades dos especialistas daquela combinação e divide pela quantidade
             late_probs = sum(fold_probs[s] for s in sensors) / len(sensors)
             late_preds = (late_probs >= 0.5).astype(int)
             
@@ -69,7 +63,6 @@ if __name__ == "__main__":
 
         with open(config.RESULTS_FILE, "w") as f: json.dump(results, f, indent=4)
 
-    # 3. Computação Estatística Final (Médias e Desvios)
     for model_name in results.keys():
         for metric in ["accuracy", "precision", "recall", "f1", "tp", "fp", "fn", "tn"]:
             values = [x[metric] for x in results[model_name]["folds"]]

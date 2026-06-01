@@ -18,7 +18,6 @@ import src.models as models
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 def extract_handcrafted_features(X):
-    """Extrai features estatísticas do eixo do tempo. X shape: (N, 180, Features)"""
     means, stds = np.mean(X, axis=1), np.std(X, axis=1)
     max_vals, min_vals = np.max(X, axis=1), np.min(X, axis=1)
     rms = np.sqrt(np.mean(X**2, axis=1))
@@ -50,13 +49,11 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
     mean_path = save_dir / f"{sensor_name}_fold_{fold_number}_mean.npy"
     std_path = save_dir / f"{sensor_name}_fold_{fold_number}_std.npy"
 
-    # Z-Score Normalization
     train_mean, train_std = X_train.mean(axis=(0, 1), keepdims=True), X_train.std(axis=(0, 1), keepdims=True) + 1e-8
     np.save(mean_path, train_mean)
     np.save(std_path, train_std)
     X_train, X_test = (X_train - train_mean) / train_std, (X_test - train_mean) / train_std
 
-    # Roteamento de Particularidades das Arquiteturas
     if config.MODEL_TYPE in ["CNN", "CNN_LSTM"]:
         X_train, X_test = X_train.transpose(0, 2, 1), X_test.transpose(0, 2, 1)
         bs = 256
@@ -105,7 +102,6 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
         
         model.load_state_dict(torch.load(ckpt_path, map_location=config.DEVICE))
 
-    # Previsão
     model.eval()
     y_true, y_pred, y_prob = [], [], []
     with torch.no_grad():

@@ -3,10 +3,6 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
-# =========================================================
-# CONFIG
-# =========================================================
-
 TRIALS_ROOT = Path("IPqM-Fall/raw")
 META_FILE = "IPqM-Fall/windows.parquet"
 OUTPUT_FILE = "IPqM-Fall/windows_fall_fixed.parquet"
@@ -14,10 +10,6 @@ OUTPUT_FILE = "IPqM-Fall/windows_fall_fixed.parquet"
 FS = 90
 PRE_SECONDS = 0.5
 POST_SECONDS = 0.5
-
-# =========================================================
-# FALL LABELS (RAW)
-# =========================================================
 
 FALL_LABELS = {
     "FRONTAL-FALL-SUPINE","FRONTAL-FALL-PRONE","BACKWARD-FALL-SUPINE",
@@ -28,10 +20,6 @@ FALL_LABELS = {
 }
 
 PRE_FALL_LABEL = "STANDING"
-
-# =========================================================
-# COARSE FALL MAPPING (NEW LABEL SPACE)
-# =========================================================
 
 FALL_CATEGORY_MAPPING = {
     "FRONTAL-FALL-SUPINE": "FRONTAL-FALL",
@@ -51,10 +39,6 @@ FALL_CATEGORY_MAPPING = {
 
 COARSE_FALL_LABELS = set(FALL_CATEGORY_MAPPING.values())
 
-# =========================================================
-# POST-FALL LABELS
-# =========================================================
-
 POST_FALL_MAPPING = {
     "FRONTAL-FALL-SUPINE": "DOWN-SUPINE",
     "FRONTAL-FALL-PRONE": "DOWN-PRONE",
@@ -69,15 +53,7 @@ POST_FALL_MAPPING = {
     "LATERAL-FALL-LEFT-RIFLE": "DOWN-LEFT",
 }
 
-# =========================================================
-# LOAD DATA
-# =========================================================
-
 meta = pd.read_parquet(META_FILE)
-
-# =========================================================
-# HELPERS
-# =========================================================
 
 def load_trial(path):
     return pd.read_parquet(path).reset_index(drop=True)
@@ -89,10 +65,6 @@ def compute_combined_signal(df):
     signal = acc_mag + gyro_mag
 
     return np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
-
-# =========================================================
-# PROCESSING
-# =========================================================
 
 updated_trials = []
 trial_files = sorted(meta["file"].unique())
@@ -143,10 +115,6 @@ for trial_file in tqdm(trial_files, desc="Processing trials"):
     fall_type = trial_fall_labels[0]
     post_fall_label = POST_FALL_MAPPING.get(fall_type, "UNKNOWN")
 
-    # =====================================================
-    # RELABEL WINDOWS
-    # =====================================================
-
     for idx, row in trial_meta.iterrows():
 
         start_idx = int(row["start_idx"])
@@ -157,40 +125,24 @@ for trial_file in tqdm(trial_files, desc="Processing trials"):
 
             overlap = not (end_idx < peak_start or start_idx > peak_end)
 
-            # -------------------------
-            # FALL WINDOW (COARSE LABEL)
-            # -------------------------
             if overlap:
                 trial_meta.loc[idx, "label"] = FALL_CATEGORY_MAPPING.get(
                     original_label,
                     "UNKNOWN_FALL"
                 )
 
-            # -------------------------
-            # BEFORE FALL
-            # -------------------------
             elif end_idx < peak_start:
                 trial_meta.loc[idx, "label"] = PRE_FALL_LABEL
 
-            # -------------------------
-            # AFTER FALL
-            # -------------------------
             elif start_idx > peak_end:
                 trial_meta.loc[idx, "label"] = post_fall_label
 
-            # -------------------------
-            # FALLBACK
-            # -------------------------
             else:
                 trial_meta.loc[idx, "label"] = "UNKNOWN"
 
             trial_meta.loc[idx, "reviewed"] = True
 
     updated_trials.append(trial_meta)
-
-# =========================================================
-# FINAL OUTPUT
-# =========================================================
 
 final_meta = pd.concat(updated_trials, ignore_index=True)
 
@@ -199,10 +151,6 @@ final_meta = final_meta.sort_values(
 )
 
 final_meta.to_parquet(OUTPUT_FILE, index=False)
-
-# =========================================================
-# SUMMARY
-# =========================================================
 
 before_fall = meta["label"].isin(FALL_LABELS).sum()
 

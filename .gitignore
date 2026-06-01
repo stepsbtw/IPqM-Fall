@@ -1,11 +1,10 @@
 __pycache__
 .venv
 .venv-label
-IPqM-Fall
 checkpoints
 checkpoints_*
 results
 results_*
 .vscode
-dataset
 windowed
+raw

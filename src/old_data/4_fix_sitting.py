@@ -3,13 +3,7 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
-
 TRIALS_ROOT = Path("IPqM-Fall/raw")
-# Point this to the output of your previous tactical (MO) script
-# This creates a perfect daisy-chain processing pipeline
 META_FILE = "IPqM-Fall/windows_mo_fixed.parquet" 
 OUTPUT_FILE = "IPqM-Fall/windows_final.parquet"
 
@@ -17,34 +11,20 @@ FS = 90
 STATIC_THRESHOLD = 0.3
 SMOOTHING_WINDOW = int(FS * 0.5)
 
-# =========================================================
-# ADL TRANSITION TAXONOMY
-# =========================================================
-# Note: I am introducing the "SITTING" and "SITTING-RIFLE" labels 
-# for the post/pre states, assuming the soldier remains seated.
-
 ADL_TRANSITIONS = {
-    # Stand-to-Sit (2.0 seconds)
+    # Stand-to-Sit
     "ADL5":  {"pre": "STANDING",       "trans": "STANDING-SITTING",       "post": "SITTING",       "duration": 2.0},
     "ADL5R": {"pre": "STANDING-RIFLE", "trans": "STANDING-SITTING-RIFLE", "post": "SITTING-RIFLE", "duration": 2.0},
     
-    # Sit-to-Stand (2.0 seconds)
+    # Sit-to-Stand
     "ADL6":  {"pre": "SITTING",       "trans": "SITTING-STANDING",       "post": "STANDING",       "duration": 2.0},
     "ADL6R": {"pre": "SITTING-RIFLE", "trans": "SITTING-STANDING-RIFLE", "post": "STANDING-RIFLE", "duration": 2.0},
 }
-
-# =========================================================
-# HELPERS
-# =========================================================
 
 def load_trial(path):
     return pd.read_parquet(path).reset_index(drop=True)
 
 def find_settle_point(df):
-    """
-    Vectorized scan to find the exact moment the torso stops rotating
-    (e.g., resting against the chair backrest, or locking into a vertical stand).
-    """
     wmag = df["wmag"].values
 
     kernel = np.ones(SMOOTHING_WINDOW) / SMOOTHING_WINDOW
@@ -56,10 +36,6 @@ def find_settle_point(df):
         return len(df) - 1
 
     return int(above[-1])
-
-# =========================================================
-# MAIN PROCESSING
-# =========================================================
 
 meta = pd.read_parquet(META_FILE)
 updated_trials = []
@@ -73,7 +49,6 @@ for trial_file in tqdm(trial_files, desc="Processing Chair Transitions"):
     trial_codes = trial_meta["activity_code"].dropna().unique()
     adl_codes = [c for c in trial_codes if c in ADL_TRANSITIONS]
 
-    # If this file doesn't contain chair transitions, skip processing
     if len(adl_codes) == 0:
         updated_trials.append(trial_meta)
         continue
@@ -101,10 +76,6 @@ for trial_file in tqdm(trial_files, desc="Processing Chair Transitions"):
         trans_label = cfg["trans"]
         post_label = cfg["post"]
 
-        # =====================================================
-        # MIDPOINT LABELING RULE
-        # =====================================================
-
         for idx, row in trial_meta.iterrows():
 
             if row["activity_code"] != adl_code:
@@ -128,10 +99,6 @@ for trial_file in tqdm(trial_files, desc="Processing Chair Transitions"):
 
     updated_trials.append(trial_meta)
 
-# =========================================================
-# FINAL OUTPUT
-# =========================================================
-
 final_meta = pd.concat(updated_trials, ignore_index=True)
 
 final_meta = final_meta.sort_values(
@@ -139,10 +106,6 @@ final_meta = final_meta.sort_values(
 )
 
 final_meta.to_parquet(OUTPUT_FILE, index=False)
-
-# =========================================================
-# SUMMARY
-# =========================================================
 
 print("\n==================== SUMMARY ====================")
 print("Chair Transitions Extracted:\n")
