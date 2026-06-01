@@ -1,4 +1,4 @@
-# IPqM-Fall: Context-Aware Tactical HAR Pipeline
+# IPqM-Fall: Real-Time Military Activity Recognition and Fall Detection with Wearable Inertial Sensors
 
 This repository contains the official machine learning pipeline for the **IPqM-Fall** dataset. Designed for tactical and military environments, the pipeline supports Human Activity Recognition (HAR) and Fall Detection using wearable IMU sensors positioned on the chest and wrists.
 
