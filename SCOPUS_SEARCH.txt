@@ -1,0 +1,17 @@
+TITLE-ABS-KEY ( ( "human activity recognition" OR "HAR" OR "fall detection" ) AND ( "wearable" OR "inertial measurement unit" OR "IMU" OR "accelerometer" OR "smartwatch" ) AND ( "deep learning" OR "convolutional neural network*" OR "CNN" OR "long short-term memory" OR "LSTM" OR "recurrent neural network*" ) )
+
+TITLE-ABS-KEY ( ( "human activity recognition" OR "HAR" OR "fall detection" OR "activity classification" ) AND ( "wearable" OR "IMU" OR "accelerometer" OR "inertial sensor*" ) AND ( "military" OR "tactical" OR "soldier*" OR "combat" OR "infantry" ) )
+
+TITLE-ABS-KEY ( ( "human activity recognition" OR "HAR" OR "activity classification" ) AND ( "wearable" OR "inertial measurement unit" OR "IMU" OR "accelerometer" OR "smartwatch" ) AND ( "deep learning" OR "convolutional neural network*" OR "CNN" OR "long short-term memory" OR "LSTM" OR "recurrent neural network*" ) )
+
+TITLE-ABS-KEY ( ( "human activity recognition" OR "HAR" OR "activity classification" ) AND ( "wearable" OR "IMU" OR "accelerometer" OR "inertial sensor*" ) AND ( "military" OR "tactical" OR "soldier*" OR "combat" OR "infantry" ) )
+
+TITLE-ABS-KEY ( ( "fall detection" OR "fall recognition" OR "detecting falls" ) AND ( "wearable" OR "inertial measurement unit" OR "IMU" OR "accelerometer" OR "smartwatch" ) AND ( "deep learning" OR "convolutional neural network*" OR "CNN" OR "long short-term memory" OR "LSTM" OR "recurrent neural network*" ) )
+
+TITLE-ABS-KEY ( ( "fall detection" OR "fall recognition" OR "detecting falls" ) AND ( "wearable" OR "IMU" OR "accelerometer" OR "inertial sensor*" ) AND ( "military" OR "tactical" OR "soldier*" OR "combat" OR "infantry" ) )
+
+TITLE-ABS-KEY ( ( "human activity recognition" OR "HAR" OR "fall detection" ) AND ( "wearable" OR "IMU" OR "accelerometer" ) AND ( "sensor fusion" OR "data fusion" OR "multimodal" OR "multi-sensor" ) AND ( "deep learning" OR "CNN" OR "LSTM" OR "neural network*" ) )
+
+TITLE-ABS-KEY ( ( "human activity recognition" OR "HAR" OR "fall detection" ) AND ( "wearable" OR "IMU" OR "smartwatch" OR "smartphone" ) AND ( "edge AI" OR "edge computing" OR "fog computing" OR "embedded" OR "lightweight" OR "low power" OR "real-time" ) AND ( "deep learning" OR "CNN" OR "LSTM" ) )
+
+TITLE-ABS-KEY ( ( "human activity recognition" OR "fall detection" OR "activity classification" ) AND ( "military" OR "tactical" OR "soldier*" ) AND ( "sensor fusion" OR "multimodal" OR "edge AI" OR "edge computing" ) AND ( "wearable" OR "IMU" OR "deep learning" ) )
