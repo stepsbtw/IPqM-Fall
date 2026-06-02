@@ -2,10 +2,10 @@ from pathlib import Path
 import torch
 
 EXPERIMENTS_TO_RUN = [
-    "SINGLE",      # Redes isoladas
-    "TRIPLE",      # Multitarefa (Queda + Postura + Movimento)
+    #"SINGLE",      # Redes isoladas
+    #"TRIPLE",      # Multitarefa (Queda + Postura + Movimento)
     "DOUBLE_FP",   # Multitarefa (Queda + Postura)
-    "DOUBLE_PM"    # Multitarefa (Postura + Movimento)
+    #"DOUBLE_PM"    # Multitarefa (Postura + Movimento)
 ]
 
 MULTI_TASK_MODEL = "CNN1Conv" # LSTM # DeepConvLSTM
