@@ -4,16 +4,22 @@ import torch
 EXPERIMENTS_TO_RUN = [
     #"SINGLE",      # Redes isoladas
     #"TRIPLE",      # Multitarefa (Queda + Postura + Movimento)
-    "DOUBLE_FP",   # Multitarefa (Queda + Postura)
-    #"DOUBLE_PM"    # Multitarefa (Postura + Movimento)
+    #"DOUBLE_FP",   # Multitarefa (Queda + Postura)
+    "DOUBLE_PM"    # Multitarefa (Postura + Movimento)
 ]
 
 MULTI_TASK_MODEL = "CNN1Conv" # LSTM # DeepConvLSTM
 
 SINGLE_TASK_MODELS = {
     "y_detect_fall": "CNN1Conv", # LSTM # DeepConvLSTM
-    "y_classify_posture": "CNN1Conv", 
-    "y_classify_movement": "CNN1Conv", 
+    "y_classify_posture": "CNN1Conv", # LSTM # DeepConvLSTM
+    "y_classify_movement": "CNN1Conv" # LSTM # DeepConvLSTM, 
+}
+
+MULTI_TASK_WEIGHTS = { # hiperparametro!
+    "fall": 1.0, # 0.5
+    "posture": 0.5, # 1.0
+    "movement": 0.5 # 1.0
 }
 
 CLASSICAL_MODEL = "RF"

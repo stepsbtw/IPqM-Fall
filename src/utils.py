@@ -266,7 +266,9 @@ def custom_multitask_loss(predictions, targets, criteria, active_tasks):
         targ = targets[task_name]
         valid_indices = (targ >= 0)
         if valid_indices.sum() > 0:
-            total_loss += criteria[task_name](pred[valid_indices], targ[valid_indices])
+            task_loss = criteria[task_name](pred[valid_indices], targ[valid_indices])
+            lambda_weight = config.MULTI_TASK_WEIGHTS[task_name]
+            total_loss += lambda_weight * task_loss
     return total_loss
 
 def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
