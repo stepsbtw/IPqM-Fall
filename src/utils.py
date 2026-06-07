@@ -260,15 +260,31 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
     print("FINAL models saved.")
 
 def custom_multitask_loss(predictions, targets, criteria, active_tasks):
-    total_loss = 0.0
+    total_loss = None
+
     for task_name in active_tasks:
         pred = predictions[task_name]
         targ = targets[task_name]
+
         valid_indices = (targ >= 0)
+
         if valid_indices.sum() > 0:
-            task_loss = criteria[task_name](pred[valid_indices], targ[valid_indices])
+            task_loss = criteria[task_name](
+                pred[valid_indices],
+                targ[valid_indices]
+            )
+
             lambda_weight = config.MULTI_TASK_WEIGHTS[task_name]
-            total_loss += lambda_weight * task_loss
+
+            if total_loss is None:
+                total_loss = lambda_weight * task_loss
+            else:
+                total_loss = total_loss + lambda_weight * task_loss
+
+    if total_loss is None:
+        device = next(iter(predictions.values())).device
+        return torch.tensor(0.0, device=device)
+
     return total_loss
 
 def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
@@ -277,22 +293,41 @@ def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
     print(f"Arquitetura Base: {config.MULTI_TASK_MODEL}")
     print(f"{'='*60}")
 
-    if mode == "TRIPLE":
+    if mode == "FALL_DETECT_POSTURE_MOVEMENT":
         active_tasks = ["fall", "posture", "movement"]
         num_classes = {"fall": 2, "posture": 4, "movement": 5}
-    elif mode == "DOUBLE_FP":
+        
+    elif mode == "FALL_DETECT_POSTURE":
         active_tasks = ["fall", "posture"]
         num_classes = {"fall": 2, "posture": 4}
-    elif mode == "DOUBLE_PM":
+        
+    elif mode == "POSTURE_MOVEMENT":
         active_tasks = ["posture", "movement"]
         num_classes = {"posture": 4, "movement": 5}
+        
+    elif mode == "FALL_CLASSIFY_POSTURE_MOVEMENT":
+        active_tasks = ["fall_classify", "posture", "movement"]
+        num_classes = {"fall_classify": 4, "posture": 4, "movement": 5}
+        
+    elif mode == "FALL_CLASSIFY_POSTURE":
+        active_tasks = ["fall_classify", "posture"]
+        num_classes = {"fall_classify": 4, "posture": 4}
+        
     else:
-        raise ValueError("Modo Multitarefa Inválido.")
+        raise ValueError(f"Modo Multitarefa Inválido: {mode}")
 
     y_targets = {}
-    if "fall" in active_tasks: y_targets["fall"] = np.load(config.DATASET_DIR / "y_detect_fall.npy")
-    if "posture" in active_tasks: y_targets["posture"] = np.load(config.DATASET_DIR / "y_classify_posture.npy")
-    if "movement" in active_tasks: y_targets["movement"] = np.load(config.DATASET_DIR / "y_classify_movement.npy")
+    if "fall" in active_tasks: 
+        y_targets["fall"] = np.load(config.DATASET_DIR / "y_detect_fall.npy")
+        
+    if "fall_classify" in active_tasks: 
+        y_targets["fall_classify"] = np.load(config.DATASET_DIR / "y_classify_fall.npy") 
+        
+    if "posture" in active_tasks: 
+        y_targets["posture"] = np.load(config.DATASET_DIR / "y_classify_posture.npy")
+        
+    if "movement" in active_tasks: 
+        y_targets["movement"] = np.load(config.DATASET_DIR / "y_classify_movement.npy")
 
     models_data = {
         "CHEST": X_chest_full, "LEFT": X_left_full, "RIGHT": X_right_full,
@@ -367,20 +402,51 @@ def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
             optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 
             model.train()
-            epoch_pbar = tqdm(range(config.EPOCHS), desc=f"Training {model_name}", leave=False)
+            epoch_pbar = tqdm(
+                range(config.EPOCHS),
+                desc=f"Training {model_name}",
+                leave=False
+            )
+
             for epoch in epoch_pbar:
+
+                epoch_loss = 0.0
+                valid_batches = 0
+
                 for data in train_loader:
+
                     b_x = data[0].to(config.DEVICE)
-                    b_y = {task: data[i + 1].to(config.DEVICE) for i, task in enumerate(active_tasks)}
-                    
+
+                    b_y = {
+                        task: data[i + 1].to(config.DEVICE)
+                        for i, task in enumerate(active_tasks)
+                    }
+
                     optimizer.zero_grad()
+
                     predictions = model(b_x)
-                    loss = custom_multitask_loss(predictions, b_y, criteria, active_tasks)
-                    if loss > 0:
+
+                    loss = custom_multitask_loss(
+                        predictions,
+                        b_y,
+                        criteria,
+                        active_tasks
+                    )
+
+                    if loss.requires_grad and loss.item() > 0:
                         loss.backward()
                         optimizer.step()
-                epoch_pbar.set_postfix(loss=f"{loss.item():.4f}")
 
+                        epoch_loss += loss.item()
+                        valid_batches += 1
+
+                avg_loss = (
+                    epoch_loss / valid_batches
+                    if valid_batches > 0
+                    else 0.0
+                )
+
+                epoch_pbar.set_postfix(loss=f"{avg_loss:.4f}")
             torch.save({"model_state": model.state_dict(), "optimizer_state": optimizer.state_dict(), "fold": fold_number, "sensor_name": model_name}, ckpt_path)
 
             model.eval()
@@ -538,16 +604,51 @@ def train_final_multitask_model(sensor_name, X, y_targets, active_tasks, num_cla
     optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 
     model.train()
-    for epoch in tqdm(range(config.EPOCHS), desc=f"FINAL {sensor_name}"):
+
+    epoch_pbar = tqdm(
+        range(config.EPOCHS),
+        desc=f"FINAL {sensor_name}"
+    )
+
+    for epoch in epoch_pbar:
+
+        epoch_loss = 0.0
+        valid_batches = 0
+
         for data in loader:
+
             b_x = data[0].to(config.DEVICE)
-            b_y = {task: data[i + 1].to(config.DEVICE) for i, task in enumerate(active_tasks)}
-            
+
+            b_y = {
+                task: data[i + 1].to(config.DEVICE)
+                for i, task in enumerate(active_tasks)
+            }
+
             optimizer.zero_grad()
+
             predictions = model(b_x)
-            loss = custom_multitask_loss(predictions, b_y, criteria, active_tasks)
-            loss.backward()
-            optimizer.step()
+
+            loss = custom_multitask_loss(
+                predictions,
+                b_y,
+                criteria,
+                active_tasks
+            )
+
+            if loss.requires_grad and loss.item() > 0:
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item()
+                valid_batches += 1
+
+        avg_loss = (
+            epoch_loss / valid_batches
+            if valid_batches > 0
+            else 0.0
+        )
+
+        epoch_pbar.set_postfix(loss=f"{avg_loss:.4f}")
 
     torch.save({"model_state": model.state_dict(), "active_tasks": active_tasks, "num_classes": num_classes}, 
                save_dir / "final_model.pth")
