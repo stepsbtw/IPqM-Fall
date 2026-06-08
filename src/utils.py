@@ -87,7 +87,7 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
         else:
             model = models.DeepConvLSTM(X_train.shape[1], num_classes).to(config.DEVICE)
     elif model_type == "LSTM":
-        bs = 512
+        bs = 256
         model = models.LSTMModel(X_train.shape[2], num_classes).to(config.DEVICE)
     elif model_type == "MLP":
         X_train = X_train.reshape(X_train.shape[0], -1)
@@ -537,7 +537,7 @@ def train_final_single_model(sensor_name, X, y, model_type, save_dir):
         bs = 256
     elif model_type == "LSTM":
         model = models.LSTMModel(X.shape[2], num_classes).to(config.DEVICE)
-        bs = 512
+        bs = 256
     elif model_type == "MLP":
         X = X.reshape(X.shape[0], -1)
         model = models.MLP(X.shape[1], num_classes).to(config.DEVICE)

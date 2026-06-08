@@ -2,22 +2,22 @@ from pathlib import Path
 import torch
 
 EXPERIMENTS_TO_RUN = [
-    #"SINGLE",      # Redes isoladas
+    "SINGLE",      # Redes isoladas
     #"FALL_DETECT_POSTURE_MOVEMENT",      # Multitarefa (Queda + Postura + Movimento)
     #"FALL_DETECT_POSTURE",   # Multitarefa (Queda + Postura)
     #"POSTURE_MOVEMENT"    # Multitarefa (Postura + Movimento)
     #"FALL_CLASSIFY_POSTURE_MOVEMENT"    # Multitarefa (Classificar Queda + Postura + Movimento)
-    "FALL_CLASSIFY_POSTURE"    # Multitarefa (Classificar Queda + Postura)
+    #"FALL_CLASSIFY_POSTURE"    # Multitarefa (Classificar Queda + Postura)
 ]
 
 MULTI_TASK_MODEL = "CNN1Conv" # LSTM # DeepConvLSTM
 
-# SINGLE_TASK_MODELS = {
-#    "y_detect_fall": "CNN1Conv", # LSTM # DeepConvLSTM
-#    "y_classify_posture": "CNN1Conv", # LSTM # DeepConvLSTM
-#    "y_classify_movement": "CNN1Conv" # LSTM # DeepConvLSTM, 
-#    "y_classify_fall": "CNN1Conv" # LSTM # DeepConvLSTM
-#}
+SINGLE_TASK_MODELS = {
+    "y_detect_fall": "LSTM", # LSTM # DeepConvLSTM
+    #"y_classify_posture": "LSTM", # LSTM # DeepConvLSTM
+    #"y_classify_movement": "LSTM" # LSTM # DeepConvLSTM, 
+    "y_classify_fall": "LSTM" # LSTM # DeepConvLSTM
+}
 
 MULTI_TASK_WEIGHTS = { # hiperparametro!
     "fall": 1.0, # 0.5

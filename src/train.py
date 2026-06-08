@@ -20,17 +20,17 @@ if __name__ == "__main__":
                 train_single_task(
                     task_name=schema, 
                     model_type=target_model,
-                    X_chest_full=X_chest_full, 
-                    X_left_full=X_left_full, 
-                    X_right_full=X_right_full, 
+                    X_chest_full=X_chest_full[:,:,::3], 
+                    X_left_full=X_left_full[:,:,::3], 
+                    X_right_full=X_right_full[:,:,::3], 
                     groups_full=groups_full
                 )
         else:
             run_multitask(
                 mode=mode,
-                X_chest_full=X_chest_full, 
-                X_left_full=X_left_full, 
-                X_right_full=X_right_full, 
+                X_chest_full=X_chest_full[:,:,::3], 
+                X_left_full=X_left_full[:,:,::3], 
+                X_right_full=X_right_full[:,:,::3], 
                 groups_full=groups_full
             )
 
