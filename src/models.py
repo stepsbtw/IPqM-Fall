@@ -54,6 +54,7 @@ class LSTMModel(nn.Module):
         self.lstm = nn.LSTM(input_size=num_features, hidden_size=200, num_layers=2, batch_first=True, dropout=config.DROPOUT)
         self.classifier = nn.Sequential(nn.Linear(200, 200), nn.ReLU(), nn.Dropout(config.DROPOUT), nn.Linear(200, num_classes))
     def forward(self, x):
+        x = x.permute(0, 2, 1)  # (B, C, T) -> (B, T, C)
         _, (hidden, _) = self.lstm(x)
         return self.classifier(hidden[-1])
 
@@ -109,6 +110,8 @@ class DeepConvLSTM_MultiTask(nn.Module):
     def forward(self, x):
         x = self.conv_block(x).permute(0, 2, 1)
         lstm_out, _ = self.lstm(x)
+
+        x = x.permute(0, 2, 1)  # (B, T, C) -> (B, C, T)
         
         shared = self.dropout(lstm_out[:, -1, :])
         
