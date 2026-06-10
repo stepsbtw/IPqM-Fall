@@ -78,14 +78,26 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
 
     num_classes = int(np.max(y_train)) + 1
 
-    if model_type in ["CNN1Conv", "DeepConvLSTM"]:
+    if model_type in ["CNN1Conv", "DeepConvLSTM", "CNN3B3Conv"]:
         X_train = X_train.transpose(0, 2, 1)
         X_test = X_test.transpose(0, 2, 1)
         bs = 256
         if model_type == "CNN1Conv":
-            model = models.CNN1Conv(X_train.shape[1], num_classes).to(config.DEVICE)
-        else:
-            model = models.DeepConvLSTM(X_train.shape[1], num_classes).to(config.DEVICE)
+            model = models.CNN1Conv(
+                X_train.shape[1],
+                num_classes
+            ).to(config.DEVICE)
+        elif model_type == "CNN3B3Conv":
+            model = models.CNN3B3Conv(
+                X_train.shape[1],
+                num_classes
+            ).to(config.DEVICE)
+        elif model_type == "DeepConvLSTM":
+            model = models.DeepConvLSTM(
+                X_train.shape[1],
+                num_classes
+            ).to(config.DEVICE)
+            
     elif model_type == "LSTM":
         bs = 256
         model = models.LSTMModel(X_train.shape[2], num_classes).to(config.DEVICE)
@@ -175,7 +187,7 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
     print(f"=== INICIANDO TAREFA ISOLADA: {task_name.upper()} ({model_type}) ===")
     print(f"{'='*50}")
     
-    torch.backends.cudnn.benchmark = True if model_type in ["CNN1Conv", "DeepConvLSTM", "LSTM", "MLP"] else False
+    torch.backends.cudnn.benchmark = True if model_type in ["CNN1Conv", "DeepConvLSTM", "LSTM", "MLP", "CNN3B3Conv"] else False
 
     y_full = np.load(config.DATASET_DIR / f"{task_name}.npy")
     valid_idx = y_full != -1
@@ -387,6 +399,8 @@ def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
                 model = models.DeepConvLSTM_MultiTask(num_features, num_classes).to(config.DEVICE)
             elif config.MULTI_TASK_MODEL == "LSTM":
                 model = models.LSTMModel_MultiTask(num_features, num_classes).to(config.DEVICE)
+            elif config.MULTI_TASK_MODEL == "CNN3B3Conv":
+                model = models.CNN3B3Conv_MultiTask(num_features, num_classes).to(config.DEVICE)
             else:
                 raise ValueError(f"Modelo Multitarefa {config.MULTI_TASK_MODEL} não reconhecido.")
 
@@ -531,9 +545,14 @@ def train_final_single_model(sensor_name, X, y, model_type, save_dir):
     num_classes = int(np.max(y)) + 1
 
     # Initialize model
-    if model_type in ["CNN1Conv", "DeepConvLSTM"]:
+    if model_type in ["CNN1Conv", "DeepConvLSTM", "CNN3B3Conv"]:
         X = X.transpose(0, 2, 1)
-        model = models.CNN1Conv(X.shape[1], num_classes).to(config.DEVICE) if model_type == "CNN1Conv" else models.DeepConvLSTM(X.shape[1], num_classes).to(config.DEVICE)
+        if model_type == "CNN1Conv":
+            model = models.CNN1Conv(X.shape[1], num_classes).to(config.DEVICE)
+        elif model_type == "DeepConvLSTM":
+            model = models.DeepConvLSTM(X.shape[1], num_classes).to(config.DEVICE)
+        else:
+            model = models.CNN3B3Conv(X.shape[1], num_classes).to(config.DEVICE)
         bs = 256
     elif model_type == "LSTM":
         model = models.LSTMModel(X.shape[2], num_classes).to(config.DEVICE)
@@ -598,6 +617,8 @@ def train_final_multitask_model(sensor_name, X, y_targets, active_tasks, num_cla
         model = models.DeepConvLSTM_MultiTask(num_features, num_classes).to(config.DEVICE)
     elif config.MULTI_TASK_MODEL == "LSTM":
         model = models.LSTMModel_MultiTask(num_features, num_classes).to(config.DEVICE)
+    elif config.MULTI_TASK_MODEL == "CNN3B3Conv":
+        model = models.CNN3B3Conv_MultiTask(num_features, num_classes).to(config.DEVICE)
     else:
         raise ValueError(config.MULTI_TASK_MODEL)
     

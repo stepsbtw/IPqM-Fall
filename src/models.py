@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
@@ -18,18 +19,79 @@ def get_classical_model():
 class CNN1Conv(nn.Module):
     def __init__(self, num_features, num_classes):
         super().__init__()
+
         self.features = nn.Sequential(
-            nn.Conv1d(num_features, 64, kernel_size=4, padding=2), nn.ReLU(),
-            nn.MaxPool1d(kernel_size=3), nn.Dropout(config.DROPOUT)
+            nn.Conv1d(num_features, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT)
         )
-        pool_out_length = (config.WINDOW_SAMPLES + 2 * 2 - 4 + 1) // 3
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, num_features, config.WINDOW_SAMPLES)
+            flattened_size = self.features(dummy).view(1, -1).shape[1]
+
         self.classifier = nn.Sequential(
-            nn.Flatten(), nn.Linear(64 * pool_out_length, 64), nn.ReLU(),
-            nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, num_classes)
+            nn.Flatten(),
+            nn.Linear(flattened_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, num_classes)
         )
+
     def forward(self, x):
         return self.classifier(self.features(x))
 
+class CNN3B3Conv(nn.Module):
+    def __init__(self, num_features, num_classes):
+        super().__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv1d(num_features, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT),
+
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT),
+
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT)
+        )
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, num_features, config.WINDOW_SAMPLES)
+            flattened_size = self.features(dummy).view(1, -1).shape[1]
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(flattened_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, num_classes)
+        )
+
+    def forward(self, x):
+        return self.classifier(self.features(x))
+        
 class DeepConvLSTM(nn.Module):
     def __init__(self, num_features, num_classes):
         super().__init__()
@@ -54,7 +116,6 @@ class LSTMModel(nn.Module):
         self.lstm = nn.LSTM(input_size=num_features, hidden_size=200, num_layers=2, batch_first=True, dropout=config.DROPOUT)
         self.classifier = nn.Sequential(nn.Linear(200, 200), nn.ReLU(), nn.Dropout(config.DROPOUT), nn.Linear(200, num_classes))
     def forward(self, x):
-        x = x.permute(0, 2, 1)  # (B, C, T) -> (B, T, C)
         _, (hidden, _) = self.lstm(x)
         return self.classifier(hidden[-1])
 
@@ -68,20 +129,26 @@ class LSTMModel(nn.Module):
 class CNN1Conv_MultiTask(nn.Module):
     def __init__(self, num_features, num_classes_dict):
         super().__init__()
-        
+
         self.shared_features = nn.Sequential(
-            nn.Conv1d(num_features, 64, kernel_size=4, padding=2), nn.ReLU(),
-            nn.MaxPool1d(kernel_size=3), nn.Dropout(config.DROPOUT)
+            nn.Conv1d(num_features, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT)
         )
-        pool_out_length = (config.WINDOW_SAMPLES + 2 * 2 - 4 + 1) // 3
-        shared_size = 64 * pool_out_length
-        
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, num_features, config.WINDOW_SAMPLES)
+            shared_size = self.shared_features(dummy).view(1, -1).shape[1]
+
         self.heads = nn.ModuleDict()
         for task_name, out_features in num_classes_dict.items():
             self.heads[task_name] = nn.Sequential(
                 nn.Flatten(),
-                nn.Linear(shared_size, 64), nn.ReLU(),
-                nn.Linear(64, 32), nn.ReLU(),
+                nn.Linear(shared_size, 64),
+                nn.ReLU(),
+                nn.Linear(64, 32),
+                nn.ReLU(),
                 nn.Linear(32, out_features)
             )
 
@@ -89,6 +156,57 @@ class CNN1Conv_MultiTask(nn.Module):
         shared = self.shared_features(x)
         return {task_name: head(shared) for task_name, head in self.heads.items()}
 
+class CNN3B3Conv_MultiTask(nn.Module):
+    def __init__(self, num_features, num_classes_dict):
+        super().__init__()
+
+        self.shared_features = nn.Sequential(
+            nn.Conv1d(num_features, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=4, padding=2),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT),
+
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT),
+
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=3),
+            nn.Dropout(config.DROPOUT)
+        )
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, num_features, config.WINDOW_SAMPLES)
+            shared_size = self.shared_features(dummy).view(1, -1).shape[1]
+
+        self.heads = nn.ModuleDict()
+        for task_name, out_features in num_classes_dict.items():
+            self.heads[task_name] = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(shared_size, 64),
+                nn.ReLU(),
+                nn.Linear(64, 32),
+                nn.ReLU(),
+                nn.Linear(32, out_features)
+            )
+
+    def forward(self, x):
+        shared = self.shared_features(x)
+        return {task_name: head(shared) for task_name, head in self.heads.items()}
 
 class DeepConvLSTM_MultiTask(nn.Module):
     def __init__(self, num_features, num_classes_dict):
@@ -110,8 +228,6 @@ class DeepConvLSTM_MultiTask(nn.Module):
     def forward(self, x):
         x = self.conv_block(x).permute(0, 2, 1)
         lstm_out, _ = self.lstm(x)
-
-        x = x.permute(0, 2, 1)  # (B, T, C) -> (B, C, T)
         
         shared = self.dropout(lstm_out[:, -1, :])
         

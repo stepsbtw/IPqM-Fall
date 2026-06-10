@@ -10,13 +10,13 @@ EXPERIMENTS_TO_RUN = [
     #"FALL_CLASSIFY_POSTURE"    # Multitarefa (Classificar Queda + Postura)
 ]
 
-MULTI_TASK_MODEL = "CNN1Conv" # LSTM # DeepConvLSTM
+MULTI_TASK_MODEL = "CNN3B3Conv" # LSTM # DeepConvLSTM
 
 SINGLE_TASK_MODELS = {
-    "y_detect_fall": "LSTM", # LSTM # DeepConvLSTM
-    #"y_classify_posture": "LSTM", # LSTM # DeepConvLSTM
-    #"y_classify_movement": "LSTM" # LSTM # DeepConvLSTM, 
-    "y_classify_fall": "LSTM" # LSTM # DeepConvLSTM
+    "y_detect_fall": "CNN3B3Conv", # LSTM # DeepConvLSTM
+    "y_classify_posture": "CNN3B3Conv", # LSTM # DeepConvLSTM
+    "y_classify_fall": "CNN3B3Conv", # LSTM # DeepConvLSTM
+    "y_classify_movement": "CNN3B3Conv" # LSTM # DeepConvLSTM, 
 }
 
 MULTI_TASK_WEIGHTS = { # hiperparametro!
