@@ -5,10 +5,10 @@ from utils import train_single_task, run_multitask
 if __name__ == "__main__":
     print("Carregando Matrizes Base dos Sensores na Memória...")
     
-    X_chest_full = np.load(config.DATASET_DIR / "X_chest.npy")
-    X_left_full  = np.load(config.DATASET_DIR / "X_left.npy")
-    X_right_full = np.load(config.DATASET_DIR / "X_right.npy")
-    groups_full  = np.load(config.DATASET_DIR / "groups.npy")
+    X_chest_full = np.load(config.WINDOWED_DATASET_DIR / "X_chest.npy")
+    X_left_full  = np.load(config.WINDOWED_DATASET_DIR / "X_left.npy")
+    X_right_full = np.load(config.WINDOWED_DATASET_DIR / "X_right.npy")
+    groups_full  = np.load(config.WINDOWED_DATASET_DIR / "groups.npy")
 
     for mode in config.EXPERIMENTS_TO_RUN:
         print(f"\n{'#'*70}")

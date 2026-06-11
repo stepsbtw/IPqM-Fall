@@ -3,15 +3,13 @@ import json
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import src.config as config
 
-DATASET_ROOT = Path("IPqM-Fall")
-WINDOWS_FILE = "IPqM-Fall/windows.parquet" 
-OUTPUT_DIR = Path("IPqM-Fall/windowed")
+OUTPUT_DIR = Path(f"IPqM-Fall/windowed/{config.WINDOW_SEC}-sec_{config.STRIDE_SEC}-step")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 FEATURE_COLUMNS = ["ax", "ay", "az", "amag", "wx", "wy", "wz", "wmag"]
 SENSORS = ["CHEST", "LEFT", "RIGHT"]
-EXPECTED_WINDOW_SAMPLES = 180
 
 RAW_MAPPINGS = {
     "y_detect_fall": {
@@ -38,6 +36,11 @@ RAW_MAPPINGS = {
         "2": ["RUNNING", "RUNNING-DOWNHILL", "RUNNING-DOWNHILL-RIFLE", "RUNNING-RIFLE", "RUNNING-UPHILL", "RUNNING-UPHILL-RIFLE"],
         "3": ["JUMPING", "JUMPING-RIFLE", "JUMPING-UPSTAIRS"],
         "4": ["CRAWLING"]
+    },
+    "y_classify_transition": {
+        "0": ["RUNNING-KNEELING-SHOOTING", "STANDING-KNEELING-SHOOTING", "WALKING-KNEELING-SHOOTING"],
+        "1": ["RUNNING-PRONE-SHOOTING", "STANDING-PRONE-SHOOTING", "WALKING-PRONE-SHOOTING"],
+        "2": ["SITTING-STANDING", "SITTING-STANDING-RIFLE", "STANDING-SITTING", "STANDING-SITTING-RIFLE"],
     }
 }
 
@@ -56,9 +59,9 @@ DICT_DETECT_MOVEMENT = build_dict(RAW_MAPPINGS["y_detect_movement"])
 DICT_CLASSIFY_FALL = build_dict(RAW_MAPPINGS["y_classify_fall"])
 DICT_CLASSIFY_POSTURE = build_dict(RAW_MAPPINGS["y_classify_posture"])
 DICT_CLASSIFY_MOVEMENT = build_dict(RAW_MAPPINGS["y_classify_movement"])
-
+DICT_CLASSIFY_TRANSITION = build_dict(RAW_MAPPINGS["y_classify_transition"])
 print("Lendo metadata Parquet...")
-windows_df = pd.read_parquet(WINDOWS_FILE)
+windows_df = pd.read_parquet(config.WINDOWS_FILE)
 
 initial_len = len(windows_df)
 windows_df = windows_df[windows_df["label"] != "UNKNOWN"]
@@ -89,7 +92,7 @@ parquet_cache = {}
 X_chest_list, X_left_list, X_right_list = [], [], []
 
 y_detect_fall_list, y_detect_movement_list = [], []
-y_classify_fall_list, y_classify_posture_list, y_classify_movement_list = [], [], []
+y_classify_fall_list, y_classify_posture_list, y_classify_movement_list, y_classify_transition_list = [], [], [], []
 y_complete_list = []
 groups_list, sync_ids_list = [], []
 
@@ -104,7 +107,7 @@ for sync_id, group in tqdm(grouped, desc="Extraindo e Rotulando Janelas"):
         sensor_windows = {}
         for _, row in group.iterrows():
             sensor = row["sensor_pos"]
-            parquet_path = DATASET_ROOT / "raw" / row["file"] 
+            parquet_path = config.DATASET_ROOT / "raw" / row["file"] 
 
             if parquet_path not in parquet_cache:
                 parquet_cache[parquet_path] = pd.read_parquet(parquet_path)
@@ -112,7 +115,7 @@ for sync_id, group in tqdm(grouped, desc="Extraindo e Rotulando Janelas"):
             df = parquet_cache[parquet_path]
             features = df.iloc[row["start_idx"]:row["end_idx"]][FEATURE_COLUMNS].to_numpy(dtype=np.float32)
 
-            if len(features) != EXPECTED_WINDOW_SAMPLES:
+            if len(features) != config.WINDOW_SAMPLES:
                 raise ValueError(f"Tamanho de janela inválido: {len(features)}")
 
             sensor_windows[sensor] = features
@@ -131,7 +134,7 @@ for sync_id, group in tqdm(grouped, desc="Extraindo e Rotulando Janelas"):
         y_classify_fall_list.append(DICT_CLASSIFY_FALL.get(label_str, -1))
         y_classify_posture_list.append(DICT_CLASSIFY_POSTURE.get(label_str, -1))
         y_classify_movement_list.append(DICT_CLASSIFY_MOVEMENT.get(label_str, -1))
-        
+        y_classify_transition_list.append(DICT_CLASSIFY_TRANSITION.get(label_str, -1))
         y_complete_list.append(DICT_COMPLETE[label_str])
 
         groups_list.append(group.iloc[0]["subject_id"])
@@ -143,19 +146,20 @@ for sync_id, group in tqdm(grouped, desc="Extraindo e Rotulando Janelas"):
         invalid_groups += 1
 
 print("\nConvertendo para NumPy arrays (Isto pode levar alguns segundos)...")
-np.save(OUTPUT_DIR / "X_chest.npy", np.array(X_chest_list, dtype=np.float32))
-np.save(OUTPUT_DIR / "X_left.npy", np.array(X_left_list, dtype=np.float32))
-np.save(OUTPUT_DIR / "X_right.npy", np.array(X_right_list, dtype=np.float32))
+np.save(config.WINDOWED_DATASET_DIR / "X_chest.npy", np.array(X_chest_list, dtype=np.float32))
+np.save(config.WINDOWED_DATASET_DIR / "X_left.npy", np.array(X_left_list, dtype=np.float32))
+np.save(config.WINDOWED_DATASET_DIR / "X_right.npy", np.array(X_right_list, dtype=np.float32))
 
-np.save(OUTPUT_DIR / "y_detect_fall.npy", np.array(y_detect_fall_list, dtype=np.int64))
-np.save(OUTPUT_DIR / "y_detect_movement.npy", np.array(y_detect_movement_list, dtype=np.int64))
-np.save(OUTPUT_DIR / "y_classify_fall.npy", np.array(y_classify_fall_list, dtype=np.int64))
-np.save(OUTPUT_DIR / "y_classify_posture.npy", np.array(y_classify_posture_list, dtype=np.int64))
-np.save(OUTPUT_DIR / "y_classify_movement.npy", np.array(y_classify_movement_list, dtype=np.int64))
-np.save(OUTPUT_DIR / "y_complete.npy", np.array(y_complete_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_detect_fall.npy", np.array(y_detect_fall_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_detect_movement.npy", np.array(y_detect_movement_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_classify_fall.npy", np.array(y_classify_fall_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_classify_posture.npy", np.array(y_classify_posture_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_classify_movement.npy", np.array(y_classify_movement_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_classify_transition.npy", np.array(y_classify_transition_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_complete.npy", np.array(y_complete_list, dtype=np.int64))
 
-np.save(OUTPUT_DIR / "groups.npy", np.array(groups_list))
-np.save(OUTPUT_DIR / "sync_ids.npy", np.array(sync_ids_list))
+np.save(config.WINDOWED_DATASET_DIR / "groups.npy", np.array(groups_list))
+np.save(config.WINDOWED_DATASET_DIR / "sync_ids.npy", np.array(sync_ids_list))
 
 mapa_documentacao = {
     "y_detect_fall": RAW_MAPPINGS["y_detect_fall"],
@@ -163,12 +167,13 @@ mapa_documentacao = {
     "y_classify_fall": RAW_MAPPINGS["y_classify_fall"],
     "y_classify_posture": RAW_MAPPINGS["y_classify_posture"],
     "y_classify_movement": RAW_MAPPINGS["y_classify_movement"],
+    "y_classify_transition": RAW_MAPPINGS["y_classify_transition"],
     "y_complete_map": {str(v): k for k, v in DICT_COMPLETE.items()}
 }
 
-with open(DATASET_ROOT / "mapping.json", "w") as f:
+with open(config.DATASET_ROOT / "mapping.json", "w") as f:
     json.dump(mapa_documentacao, f, indent=4)
 
 print(f"Janelas Sincronizadas Válidas : {valid_groups}")
 print(f"Janelas Inválidas/Perdidas    : {invalid_groups}")
-print(f"Ficheiros gravados em         : {OUTPUT_DIR}")
+print(f"Ficheiros gravados em         : {config.WINDOWED_DATASET_DIR}")

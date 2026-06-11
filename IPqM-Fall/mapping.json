@@ -84,6 +84,24 @@
             "CRAWLING"
         ]
     },
+    "y_classify_transition": {
+        "0": [
+            "RUNNING-KNEELING-SHOOTING",
+            "STANDING-KNEELING-SHOOTING",
+            "WALKING-KNEELING-SHOOTING"
+        ],
+        "1": [
+            "RUNNING-PRONE-SHOOTING",
+            "STANDING-PRONE-SHOOTING",
+            "WALKING-PRONE-SHOOTING"
+        ],
+        "2": [
+            "SITTING-STANDING",
+            "SITTING-STANDING-RIFLE",
+            "STANDING-SITTING",
+            "STANDING-SITTING-RIFLE"
+        ]
+    },
     "y_complete_map": {
         "0": "BACKWARD-FALL",
         "1": "CRAWLING",

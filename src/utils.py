@@ -81,7 +81,6 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
     if model_type in ["CNN1Conv", "DeepConvLSTM", "CNN3B3Conv"]:
         X_train = X_train.transpose(0, 2, 1)
         X_test = X_test.transpose(0, 2, 1)
-        bs = 256
         if model_type == "CNN1Conv":
             model = models.CNN1Conv(
                 X_train.shape[1],
@@ -99,7 +98,6 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
             ).to(config.DEVICE)
             
     elif model_type == "LSTM":
-        bs = 256
         model = models.LSTMModel(X_train.shape[2], num_classes).to(config.DEVICE)
     elif model_type == "MLP":
         X_train = X_train.reshape(X_train.shape[0], -1)
@@ -110,9 +108,9 @@ def train_dl_model(sensor_name, X_train, X_test, y_train, y_test, test_subject, 
     if torch.cuda.device_count() > 1 and config.DEVICE.type == "cuda":
         model = nn.DataParallel(model)
 
-    train_loader = DataLoader(DynamicDataset(X_train, y_train), batch_size=bs, shuffle=True,
+    train_loader = DataLoader(DynamicDataset(X_train, y_train), batch_size=config.BATCH_SIZE, shuffle=True,
                               num_workers=config.NUM_WORKERS, pin_memory=config.PIN_MEMORY)
-    test_loader = DataLoader(DynamicDataset(X_test, y_test), batch_size=bs, shuffle=False)
+    test_loader = DataLoader(DynamicDataset(X_test, y_test), batch_size=config.BATCH_SIZE, shuffle=False)
 
     class_counts = np.array([np.sum(y_train == c) for c in range(num_classes)])
     class_weights = torch.tensor(len(y_train) / (num_classes * (class_counts + 1e-6)),
@@ -189,7 +187,7 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
     
     torch.backends.cudnn.benchmark = True if model_type in ["CNN1Conv", "DeepConvLSTM", "LSTM", "MLP", "CNN3B3Conv"] else False
 
-    y_full = np.load(config.DATASET_DIR / f"{task_name}.npy")
+    y_full = np.load(config.WINDOWED_DATASET_DIR / f"{task_name}.npy")
     valid_idx = y_full != -1
     y = y_full[valid_idx]
     
@@ -330,16 +328,16 @@ def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
 
     y_targets = {}
     if "fall" in active_tasks: 
-        y_targets["fall"] = np.load(config.DATASET_DIR / "y_detect_fall.npy")
+        y_targets["fall"] = np.load(config.WINDOWED_DATASET_DIR / "y_detect_fall.npy")
         
     if "fall_classify" in active_tasks: 
-        y_targets["fall_classify"] = np.load(config.DATASET_DIR / "y_classify_fall.npy") 
+        y_targets["fall_classify"] = np.load(config.WINDOWED_DATASET_DIR / "y_classify_fall.npy") 
         
     if "posture" in active_tasks: 
-        y_targets["posture"] = np.load(config.DATASET_DIR / "y_classify_posture.npy")
+        y_targets["posture"] = np.load(config.WINDOWED_DATASET_DIR / "y_classify_posture.npy")
         
     if "movement" in active_tasks: 
-        y_targets["movement"] = np.load(config.DATASET_DIR / "y_classify_movement.npy")
+        y_targets["movement"] = np.load(config.WINDOWED_DATASET_DIR / "y_classify_movement.npy")
 
     models_data = {
         "CHEST": X_chest_full, "LEFT": X_left_full, "RIGHT": X_right_full,
@@ -553,10 +551,8 @@ def train_final_single_model(sensor_name, X, y, model_type, save_dir):
             model = models.DeepConvLSTM(X.shape[1], num_classes).to(config.DEVICE)
         else:
             model = models.CNN3B3Conv(X.shape[1], num_classes).to(config.DEVICE)
-        bs = 256
     elif model_type == "LSTM":
         model = models.LSTMModel(X.shape[2], num_classes).to(config.DEVICE)
-        bs = 256
     elif model_type == "MLP":
         X = X.reshape(X.shape[0], -1)
         model = models.MLP(X.shape[1], num_classes).to(config.DEVICE)
@@ -564,7 +560,7 @@ def train_final_single_model(sensor_name, X, y, model_type, save_dir):
     else:
         raise ValueError(model_type)
 
-    loader = DataLoader(DynamicDataset(X, y), batch_size=bs, shuffle=True, 
+    loader = DataLoader(DynamicDataset(X, y), batch_size=config.BATCH_SIZE, shuffle=True, 
                         num_workers=config.NUM_WORKERS, pin_memory=config.PIN_MEMORY)
 
     # Setup Criteria

@@ -2,15 +2,9 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
+import src.config as config
 
-TRIALS_ROOT = Path("IPqM-Fall/raw")
-META_FILE = "IPqM-Fall/windows.parquet"
-#OUTPUT_FILE = "IPqM-Fall/windows_fall_fixed.parquet"
-OUTPUT_FILE = "IPqM-Fall/windows.parquet"
-
-FS = 90
-PRE_SECONDS = 0.5
-POST_SECONDS = 0.5
+TRIALS_ROOT = config.DATASET_ROOT / "raw"
 
 FALL_LABELS = {
     "FRONTAL-FALL-SUPINE","FRONTAL-FALL-PRONE","BACKWARD-FALL-SUPINE",
@@ -54,7 +48,7 @@ POST_FALL_MAPPING = {
     "LATERAL-FALL-LEFT-RIFLE": "DOWN-LEFT",
 }
 
-meta = pd.read_parquet(META_FILE)
+meta = pd.read_parquet(config.WINDOWS_FILE)
 
 def load_trial(path):
     return pd.read_parquet(path).reset_index(drop=True)
@@ -102,8 +96,8 @@ for trial_file in tqdm(trial_files, desc="Processing trials"):
 
     peak_idx = int(np.argmax(signal))
 
-    peak_start = max(0, int(peak_idx - PRE_SECONDS * FS))
-    peak_end = min(len(signal), int(peak_idx + POST_SECONDS * FS))
+    peak_start = max(0, int(peak_idx - config.PRE_FALL_SECONDS * config.FS))
+    peak_end = min(len(signal), int(peak_idx + config.POST_FALL_SECONDS * config.FS))
 
     trial_fall_labels = trial_meta[
         trial_meta["label"].isin(FALL_LABELS)
@@ -151,7 +145,7 @@ final_meta = final_meta.sort_values(
     by=["subject_id", "sensor_pos", "file", "start_idx"]
 )
 
-final_meta.to_parquet(OUTPUT_FILE, index=False)
+final_meta.to_parquet(config.WINDOWS_FILE, index=False)
 
 before_fall = meta["label"].isin(FALL_LABELS).sum()
 
@@ -175,4 +169,4 @@ print(f"Lateral-right windows : {right_count}")
 print(f"Unknown windows       : {unknown_count}")
 print("=================================================\n")
 
-print(f"Saved refined metadata to:\n{OUTPUT_FILE}")
+print(f"Saved refined metadata to:\n{config.WINDOWS_FILE}")

@@ -2,15 +2,9 @@ import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
 import time
+import src.config as config
 
-TRIALS_ROOT = Path("IPqM-Fall/raw")
-
-WINDOW_SEC = 2
-STRIDE_SEC = 1
-FS = 90
-
-WINDOW_SIZE = WINDOW_SEC * FS
-STRIDE = STRIDE_SEC * FS
+TRIALS_ROOT = config.DATASET_ROOT / "raw"
 
 LABEL_MAPPING = {
     "ADL1": "STANDING",
@@ -79,7 +73,7 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
     except Exception:
         continue
 
-    if len(df) < WINDOW_SIZE:
+    if len(df) < config.WINDOW_SAMPLES:
         continue
 
     # raw/ID1/CHEST/ADL1/ID1_CHEST_ADL1_TRIAL1.parquet
@@ -92,12 +86,12 @@ for parquet_file in tqdm(trial_files, desc="Processing trials", unit="file"):
     activity_code = parquet_file.parent.name
     initial_label = LABEL_MAPPING.get(activity_code, "UNKNOWN")
 
-    n_windows = ((len(df) - WINDOW_SIZE) // STRIDE) + 1
+    n_windows = ((len(df) - config.WINDOW_SAMPLES) // config.STRIDE_SAMPLES) + 1
 
     for i in range(n_windows):
 
-        start = i * STRIDE
-        end = start + WINDOW_SIZE
+        start = i * config.STRIDE_SAMPLES
+        end = start + config.WINDOW_SAMPLES
 
         window_id = f"{parquet_file.stem}_win_{i:06d}"
 
@@ -121,7 +115,7 @@ meta = meta.sort_values(
     by=["subject_id", "sensor_pos", "file", "start_idx"]
 )
 
-meta.to_parquet("IPqM-Fall/windows.parquet", index=False)
+meta.to_parquet(config.WINDOWS_FILE, index=False)
 
 print(f"\nTrials processed : {len(trial_files)}")
 print(f"Windows created  : {len(meta)}")
