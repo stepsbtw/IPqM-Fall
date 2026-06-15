@@ -4,17 +4,53 @@ import torch
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
+from lightgbm import LGBMClassifier
 
 import config
 
-def get_classical_model():
-    if config.CLASSICAL_MODEL == "SVM":
-        return SVC(kernel='rbf', probability=True, class_weight='balanced', random_state=42)
-    elif config.CLASSICAL_MODEL == "RF":
-        return RandomForestClassifier(n_estimators=100, class_weight='balanced', n_jobs=-1, random_state=42)
-    elif config.CLASSICAL_MODEL == "KNN":
-        return KNeighborsClassifier(n_neighbors=5, weights='distance', n_jobs=-1)
-    raise ValueError(f"Modelo clássico {config.CLASSICAL_MODEL} não reconhecido.")
+def get_classical_model(model_type):
+    model_type = model_type.upper()
+
+    if model_type == "RF":
+        return RandomForestClassifier(
+            n_estimators=10,
+            criterion="gini",
+            min_samples_split=2,
+            min_samples_leaf=1,
+            bootstrap=True,
+            random_state=42,
+            n_jobs=-1,
+        )
+
+    if model_type == "SVM":
+        return SVC(
+            C=1.0,
+            kernel="rbf",
+            gamma="auto",
+            shrinking=True,
+            tol=0.001,
+            probability=True,
+            class_weight=None,
+            random_state=42,
+        )
+
+    if model_type == "KNN":
+        return KNeighborsClassifier(
+            n_neighbors=5,
+            weights="uniform",
+            algorithm="auto",
+            leaf_size=30,
+            metric="euclidean",
+            n_jobs=-1,
+        )
+
+    if model_type == "LGBM":
+        params = dict(config.LIGHTGBM_PARAMS)
+        return LGBMClassifier(**params)
+
+    raise ValueError(
+        f"Modelo clássico {model_type} não reconhecido."
+    )
 
 class CNN1Conv(nn.Module):
     def __init__(self, num_features, num_classes):

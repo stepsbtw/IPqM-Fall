@@ -18,7 +18,7 @@ import models
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-CLASSICAL_MODELS = {"RF", "SVM", "KNN"}
+CLASSICAL_MODELS = {"RF", "SVM", "KNN", "LGBM"}
 CONV_MODELS = {"CNN1Conv", "CNN3B3Conv", "DeepConvLSTM"}
 DL_MODELS = CONV_MODELS | {"LSTM", "MLP"}
 LATE_FUSIONS = {
@@ -43,13 +43,27 @@ TARGET_FILES = {
 
 
 def extract_handcrafted_features(X):
-    stats = [
-        np.mean(X, axis=1), np.std(X, axis=1), np.max(X, axis=1),
-        np.min(X, axis=1), np.sqrt(np.mean(X**2, axis=1)),
+    if X.ndim != 3:
+        raise ValueError(
+            f"Expected X with shape (samples, time, channels), got {X.shape}."
+        )
+
+    features = [
+        np.mean(X, axis=1),
+        np.std(X, axis=1),
+        np.max(X, axis=1),
+        np.min(X, axis=1),
+        np.sqrt(np.mean(np.square(X), axis=1)),
+        skew(X, axis=1, bias=False, nan_policy="omit"),
+        kurtosis(X, axis=1, bias=False, nan_policy="omit"),
     ]
-    X_safe = X + np.random.normal(0, 1e-8, X.shape)
-    stats += [skew(X_safe, axis=1, bias=False), kurtosis(X_safe, axis=1, bias=False)]
-    return np.nan_to_num(np.concatenate(stats, axis=1))
+
+    return np.nan_to_num(
+        np.concatenate(features, axis=1),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
 
 
 def compute_metrics(y_true, y_pred):
@@ -57,12 +71,42 @@ def compute_metrics(y_true, y_pred):
     binary = len(classes) <= 2 and set(classes).issubset({0, 1})
     result = {"accuracy": float(accuracy_score(y_true, y_pred))}
     if binary:
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+        # In y_detect_fall: 0 = Fall and 1 = Non-Fall.
+        matrix = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        tp = matrix[0, 0]
+        fn = matrix[0, 1]
+        fp = matrix[1, 0]
+        tn = matrix[1, 1]
+
         result.update({
-            "precision": float(precision_score(y_true, y_pred, pos_label=1, zero_division=0)),
-            "recall": float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)),
-            "f1": float(f1_score(y_true, y_pred, pos_label=1, zero_division=0)),
-            "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+            "precision": float(
+                precision_score(
+                    y_true,
+                    y_pred,
+                    pos_label=0,
+                    zero_division=0,
+                )
+            ),
+            "recall": float(
+                recall_score(
+                    y_true,
+                    y_pred,
+                    pos_label=0,
+                    zero_division=0,
+                )
+            ),
+            "f1": float(
+                f1_score(
+                    y_true,
+                    y_pred,
+                    pos_label=0,
+                    zero_division=0,
+                )
+            ),
+            "tp": int(tp),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tn": int(tn),
         })
     else:
         result.update({
@@ -71,8 +115,6 @@ def compute_metrics(y_true, y_pred):
             "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
         })
     return result
-
-
 
 
 def compute_fixed_multiclass_metrics(y_true, y_pred, labels):
@@ -111,6 +153,7 @@ def compute_unified_mapped_metrics(y_true, y_pred):
         metrics["valid_samples"] = int(mask.sum())
         results[task] = metrics
     return results
+
 
 
 def sensor_sets(chest, left, right):
@@ -253,17 +296,27 @@ def summarize(entry):
         entry[f"{metric}_std"] = float(np.std(values))
 
 
-def train_classical(X_train, X_test, y_train, y_test):
+def train_classical(X_train, X_test, y_train, y_test, model_type):
     scaler = StandardScaler()
     X_train = scaler.fit_transform(extract_handcrafted_features(X_train))
     X_test = scaler.transform(extract_handcrafted_features(X_test))
-    model = models.get_classical_model()
+
+    model = models.get_classical_model(model_type)
     model.fit(X_train, y_train)
-    return compute_metrics(y_test, model.predict(X_test)), model.predict_proba(X_test)
+
+    predictions = model.predict(X_test)
+    probabilities = model.predict_proba(X_test)
+
+    return compute_metrics(y_test, predictions), probabilities
 
 
-def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_full, groups_full):
-    print(f"\n{'=' * 50}\n=== INICIANDO TAREFA ISOLADA: {task_name.upper()} ({model_type}) ===\n{'=' * 50}")
+def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_full, groups_full, experiment_tag="FULL_IMU"):
+    print(
+        f"\n{'=' * 60}\n"
+        f"=== TAREFA: {task_name.upper()} | MODELO: {model_type} "
+        f"| MODALIDADE: {experiment_tag} ===\n"
+        f"{'=' * 60}"
+    )
     torch.backends.cudnn.benchmark = model_type in DL_MODELS
 
     y_full = np.load(config.WINDOWED_DATASET_DIR / f"{task_name}.npy")
@@ -275,19 +328,43 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
 
     groups = groups_full[valid]
     datasets = sensor_sets(X_chest_full[valid], X_left_full[valid], X_right_full[valid])
-    results = {name: {"folds": []} for name in [*datasets, *LATE_FUSIONS]}
-    result_file = config.RESULTS_DIR / f"results_{task_name}_{model_type.lower()}.json"
+    results = {
+        name: {
+            "folds": [],
+            "model_type": model_type,
+            "modality": experiment_tag,
+            "feature_set": config.CLASSICAL_FEATURE_SET
+            if model_type in CLASSICAL_MODELS
+            else "RAW_SEQUENCE",
+            "input_channels_per_sensor": int(X_chest_full.shape[2]),
+        }
+        for name in [*datasets, *LATE_FUSIONS]
+    }
+    result_file = (
+        config.RESULTS_DIR
+        / f"results_{task_name}_{model_type.lower()}_{experiment_tag.lower()}.json"
+    )
     folds = LeaveOneGroupOut().split(datasets["CHEST"], y, groups)
 
     for fold, (train_idx, test_idx) in enumerate(tqdm(list(folds), desc=f"LOSO CV - {task_name} ({model_type})"), 1):
         subject = groups[test_idx][0]
         fold_probs = {}
         for name, X in datasets.items():
-            save_dir = config.CHECKPOINT_DIR / f"{task_name}_{model_type.lower()}" / name
+            save_dir = (
+                config.CHECKPOINT_DIR
+                / f"{task_name}_{model_type.lower()}_{experiment_tag.lower()}"
+                / name
+            )
             save_dir.mkdir(parents=True, exist_ok=True)
 
             if model_type in CLASSICAL_MODELS:
-                metrics, probs = train_classical(X[train_idx], X[test_idx], y[train_idx], y[test_idx])
+                metrics, probs = train_classical(
+                    X[train_idx],
+                    X[test_idx],
+                    y[train_idx],
+                    y[test_idx],
+                    model_type,
+                )
             else:
                 ckpt = save_dir / f"{name}_fold_{fold}_subject_{subject}.pth"
                 X_train, X_test = prepare_data(X[train_idx], model_type, save_dir, X[test_idx], f"{name}_fold_{fold}_")
@@ -313,7 +390,11 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
                     torch.save({
                         "model_state": (model.module if isinstance(model, nn.DataParallel) else model).state_dict(),
                         "optimizer_state": optimizer.state_dict(), "epoch": epoch,
-                        "sensor_name": name, "fold": fold, "model_type": model_type,
+                        "sensor_name": name,
+                        "fold": fold,
+                        "model_type": model_type,
+                        "experiment_tag": experiment_tag,
+                        "input_channels_per_sensor": int(X_chest_full.shape[2]),
                     }, ckpt)
                 state = torch.load(ckpt, map_location=config.DEVICE)
                 (model.module if isinstance(model, nn.DataParallel) else model).load_state_dict(state["model_state"])
@@ -339,15 +420,42 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
 
     print("\nTraining FINAL models on all 15 subjects...\n")
     for name, X in datasets.items():
-        final_dir = config.CHECKPOINT_DIR / f"{task_name}_{model_type.lower()}" / "FINAL" / name
+        final_dir = (
+            config.CHECKPOINT_DIR
+            / f"{task_name}_{model_type.lower()}_{experiment_tag.lower()}"
+            / "FINAL"
+            / name
+        )
         final_dir.mkdir(parents=True, exist_ok=True)
         if model_type in CLASSICAL_MODELS:
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(extract_handcrafted_features(X))
-            model = models.get_classical_model()
+            model = models.get_classical_model(model_type)
             model.fit(X_scaled, y)
             joblib.dump(model, final_dir / "final_model.pkl")
             joblib.dump(scaler, final_dir / "scaler.pkl")
+            with open(
+                final_dir / "metadata.json",
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(
+                    {
+                        "task_name": task_name,
+                        "model_type": model_type,
+                        "modality": experiment_tag,
+                        "feature_set": config.CLASSICAL_FEATURE_SET,
+                        "input_channels_per_sensor": int(
+                            X_chest_full.shape[2]
+                        ),
+                        "features_per_channel": 7,
+                        "total_features": int(
+                            extract_handcrafted_features(X[:1]).shape[1]
+                        ),
+                    },
+                    f,
+                    indent=4,
+                )
             continue
 
         X_train, _ = prepare_data(X, model_type, final_dir)
@@ -358,8 +466,18 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
         optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
         for _ in tqdm(range(config.EPOCHS), desc=f"FINAL {name}"):
             single_epoch(model, loader, criterion, optimizer)
-        torch.save({"model_state": model.state_dict(), "model_type": model_type, "num_classes": n_classes}, final_dir / "final_model.pth")
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "model_type": model_type,
+                "num_classes": n_classes,
+                "experiment_tag": experiment_tag,
+                "input_channels_per_sensor": int(X_chest_full.shape[2]),
+            },
+            final_dir / "final_model.pth",
+        )
     print("FINAL models saved.")
+
 
 def train_unified_model(model_type, X_chest_full, X_left_full, X_right_full, groups_full):
     print(f"\n{'=' * 70}\n=== UNIFIED NON-TASK BASELINE: 13 CLASSES ({model_type}) ===\n{'=' * 70}")
@@ -504,6 +622,7 @@ def train_unified_model(model_type, X_chest_full, X_left_full, X_right_full, gro
         }, final_dir / "final_model.pth")
 
     print(f"Unified results saved to: {result_file}")
+
 
 
 def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
