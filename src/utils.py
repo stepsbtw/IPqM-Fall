@@ -73,6 +73,46 @@ def compute_metrics(y_true, y_pred):
     return result
 
 
+
+
+def compute_fixed_multiclass_metrics(y_true, y_pred, labels):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    labels = list(labels)
+    return {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision_macro": float(precision_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
+        "recall_macro": float(recall_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
+        "f1_macro": float(f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
+    }
+
+
+def compute_unified_mapped_metrics(y_true, y_pred):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    results = {}
+
+    # Preserve the existing task coding: 0 = Fall, 1 = Non-Fall.
+    fd_true = np.where(y_true <= 3, 0, 1)
+    fd_pred = np.where(y_pred <= 3, 0, 1)
+    results["fall_detection"] = compute_metrics(fd_true, fd_pred)
+
+    specs = {
+        "fall_type": ([0, 1, 2, 3], 0, 4),
+        "posture": ([4, 5, 6, 7], 4, 4),
+        "movement": ([8, 9, 10, 11, 12], 8, 5),
+    }
+    for task, (ids, offset, n_classes) in specs.items():
+        mask = np.isin(y_true, ids)
+        task_true = y_true[mask] - offset
+        raw_pred = y_pred[mask]
+        task_pred = np.where(np.isin(raw_pred, ids), raw_pred - offset, -1)
+        metrics = compute_fixed_multiclass_metrics(task_true, task_pred, range(n_classes))
+        metrics["valid_samples"] = int(mask.sum())
+        results[task] = metrics
+    return results
+
+
 def sensor_sets(chest, left, right):
     return {
         "CHEST": chest,
@@ -320,6 +360,150 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
             single_epoch(model, loader, criterion, optimizer)
         torch.save({"model_state": model.state_dict(), "model_type": model_type, "num_classes": n_classes}, final_dir / "final_model.pth")
     print("FINAL models saved.")
+
+def train_unified_model(model_type, X_chest_full, X_left_full, X_right_full, groups_full):
+    print(f"\n{'=' * 70}\n=== UNIFIED NON-TASK BASELINE: 13 CLASSES ({model_type}) ===\n{'=' * 70}")
+    torch.backends.cudnn.benchmark = model_type in DL_MODELS
+
+    target_path = config.WINDOWED_DATASET_DIR / config.UNIFIED_TARGET
+    if not target_path.exists():
+        raise FileNotFoundError(f"Unified target not found: {target_path}")
+
+    y_full = np.load(target_path)
+    if not (len(y_full) == len(groups_full) == len(X_chest_full) == len(X_left_full) == len(X_right_full)):
+        raise ValueError("X, groups, and y_unified must have the same length.")
+
+    valid = y_full >= 0
+    y = y_full[valid].astype(np.int64)
+    groups = groups_full[valid]
+    datasets = sensor_sets(X_chest_full[valid], X_left_full[valid], X_right_full[valid])
+
+    observed = set(np.unique(y).tolist())
+    expected = set(range(config.UNIFIED_NUM_CLASSES))
+    if observed != expected:
+        raise ValueError(f"Expected unified classes 0..12, observed {sorted(observed)}")
+
+    print(f"Valid unified samples: {len(y)}")
+    print(f"Ignored transition samples: {int((~valid).sum())}")
+
+    names = [*datasets, *LATE_FUSIONS]
+    results = {
+        name: {
+            "native": {"folds": []},
+            "mapped": {
+                "fall_detection": {"folds": []},
+                "fall_type": {"folds": []},
+                "posture": {"folds": []},
+                "movement": {"folds": []},
+            },
+        }
+        for name in names
+    }
+    result_file = config.RESULTS_DIR / f"results_y_unified_{model_type.lower()}.json"
+    folds = list(LeaveOneGroupOut().split(datasets["CHEST"], y, groups))
+
+    for fold, (train_idx, test_idx) in enumerate(tqdm(folds, desc=f"LOSO CV - y_unified ({model_type})"), 1):
+        subject = groups[test_idx][0]
+        fold_probs = {}
+        train_classes = set(np.unique(y[train_idx]).tolist())
+        if train_classes != expected:
+            raise ValueError(f"Fold {fold} training partition missing classes: {sorted(expected - train_classes)}")
+
+        for name, X in datasets.items():
+            save_dir = config.CHECKPOINT_DIR / f"y_unified_{model_type.lower()}" / name
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            if model_type in CLASSICAL_MODELS:
+                native, probs = train_classical(X[train_idx], X[test_idx], y[train_idx], y[test_idx])
+            else:
+                ckpt = save_dir / f"{name}_fold_{fold}_subject_{subject}.pth"
+                X_train, X_test = prepare_data(X[train_idx], model_type, save_dir, X[test_idx], f"{name}_fold_{fold}_")
+                model = create_model(model_type, X_train, config.UNIFIED_NUM_CLASSES)
+                if torch.cuda.device_count() > 1 and config.DEVICE.type == "cuda":
+                    model = nn.DataParallel(model)
+                train_loader = make_loader(X_train, y[train_idx], config.BATCH_SIZE, True, workers=True)
+                test_loader = make_loader(X_test, y[test_idx], config.BATCH_SIZE, False)
+                criterion = nn.CrossEntropyLoss(weight=class_weights(y[train_idx], config.UNIFIED_NUM_CLASSES))
+                optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+
+                start = 0
+                if ckpt.exists():
+                    state = torch.load(ckpt, map_location=config.DEVICE)
+                    base = model.module if isinstance(model, nn.DataParallel) else model
+                    base.load_state_dict(state["model_state"])
+                    optimizer.load_state_dict(state["optimizer_state"])
+                    start = state["epoch"] + 1
+
+                progress = tqdm(range(start, config.EPOCHS), desc=f"{name} Fold {fold}", leave=False)
+                for epoch in progress:
+                    loss = single_epoch(model, train_loader, criterion, optimizer)
+                    progress.set_postfix(loss=f"{loss:.4f}")
+                    base = model.module if isinstance(model, nn.DataParallel) else model
+                    torch.save({
+                        "model_state": base.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "epoch": epoch,
+                        "sensor_name": name,
+                        "fold": fold,
+                        "model_type": model_type,
+                        "num_classes": config.UNIFIED_NUM_CLASSES,
+                        "target": "y_unified",
+                    }, ckpt)
+
+                state = torch.load(ckpt, map_location=config.DEVICE)
+                base = model.module if isinstance(model, nn.DataParallel) else model
+                base.load_state_dict(state["model_state"])
+                native, probs = evaluate_single(model, test_loader)
+
+            preds = np.argmax(probs, axis=1)
+            fold_probs[name] = probs
+            native.update({"fold": fold, "test_subject": str(subject), "valid_samples": int(len(test_idx))})
+            results[name]["native"]["folds"].append(native)
+            mapped = compute_unified_mapped_metrics(y[test_idx], preds)
+            for task, metrics in mapped.items():
+                metrics.update({"fold": fold, "test_subject": str(subject)})
+                results[name]["mapped"][task]["folds"].append(metrics)
+
+        for fusion, sensors in LATE_FUSIONS.items():
+            probs = sum(fold_probs[s] for s in sensors) / len(sensors)
+            preds = np.argmax(probs, axis=1)
+            native = compute_metrics(y[test_idx], preds)
+            native.update({"fold": fold, "test_subject": str(subject), "valid_samples": int(len(test_idx))})
+            results[fusion]["native"]["folds"].append(native)
+            mapped = compute_unified_mapped_metrics(y[test_idx], preds)
+            for task, metrics in mapped.items():
+                metrics.update({"fold": fold, "test_subject": str(subject)})
+                results[fusion]["mapped"][task]["folds"].append(metrics)
+
+        with open(result_file, "w") as f:
+            json.dump(results, f, indent=4)
+
+    for cfg_results in results.values():
+        summarize(cfg_results["native"])
+        for task_results in cfg_results["mapped"].values():
+            summarize(task_results)
+    with open(result_file, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print("\nTraining FINAL unified models on all valid samples...\n")
+    for name, X in datasets.items():
+        final_dir = config.CHECKPOINT_DIR / f"y_unified_{model_type.lower()}" / "FINAL" / name
+        final_dir.mkdir(parents=True, exist_ok=True)
+        X_train, _ = prepare_data(X, model_type, final_dir)
+        model = create_model(model_type, X_train, config.UNIFIED_NUM_CLASSES)
+        loader = make_loader(X_train, y, config.BATCH_SIZE, True, workers=True)
+        criterion = nn.CrossEntropyLoss(weight=class_weights(y, config.UNIFIED_NUM_CLASSES))
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+        for _ in tqdm(range(config.EPOCHS), desc=f"FINAL UNIFIED {name}"):
+            single_epoch(model, loader, criterion, optimizer)
+        torch.save({
+            "model_state": model.state_dict(),
+            "model_type": model_type,
+            "num_classes": config.UNIFIED_NUM_CLASSES,
+            "target": "y_unified",
+        }, final_dir / "final_model.pth")
+
+    print(f"Unified results saved to: {result_file}")
 
 
 def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):

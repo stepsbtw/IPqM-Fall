@@ -29,7 +29,8 @@ TRANSITION_SMOOTHING_WINDOW = int(FS * 0.5)
 
 
 EXPERIMENTS_TO_RUN = [
-    "SINGLE",
+    # "SINGLE",
+    "UNIFIED",
     # "FALL_DETECT_POSTURE",
     # "FALL_DETECT_MOVEMENT",
     # "POSTURE_MOVEMENT",
@@ -39,6 +40,11 @@ EXPERIMENTS_TO_RUN = [
 ]
 
 MULTI_TASK_MODEL = "CNN1Conv"
+
+# Flat Task-vs-Non-Task baseline (13 macro-classes).
+UNIFIED_MODEL = "CNN1Conv"
+UNIFIED_TARGET = "y_unified.npy"
+UNIFIED_NUM_CLASSES = 13
 
 SINGLE_TASK_MODELS = {
     "y_detect_fall": "CNN1Conv", # CNN3B3Conv, LSTM, DeepConvLSTM

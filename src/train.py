@@ -1,6 +1,6 @@
 import numpy as np
 import config
-from utils import train_single_task, run_multitask
+from utils import train_single_task, train_unified_model, run_multitask
 
 if __name__ == "__main__":
     print("Carregando Matrizes Base dos Sensores na Memória...")
@@ -18,20 +18,28 @@ if __name__ == "__main__":
         if mode == "SINGLE":
             for schema, target_model in config.SINGLE_TASK_MODELS.items():
                 train_single_task(
-                    task_name=schema, 
+                    task_name=schema,
                     model_type=target_model,
-                    X_chest_full=X_chest_full[:,:,:], 
-                    X_left_full=X_left_full[:,:,:], 
-                    X_right_full=X_right_full[:,:,:], 
-                    groups_full=groups_full
+                    X_chest_full=X_chest_full,
+                    X_left_full=X_left_full,
+                    X_right_full=X_right_full,
+                    groups_full=groups_full,
                 )
+        elif mode == "UNIFIED":
+            train_unified_model(
+                model_type=config.UNIFIED_MODEL,
+                X_chest_full=X_chest_full,
+                X_left_full=X_left_full,
+                X_right_full=X_right_full,
+                groups_full=groups_full,
+            )
         else:
             run_multitask(
                 mode=mode,
-                X_chest_full=X_chest_full[:,:,:], 
-                X_left_full=X_left_full[:,:,:], 
-                X_right_full=X_right_full[:,:,:], 
-                groups_full=groups_full
+                X_chest_full=X_chest_full,
+                X_left_full=X_left_full,
+                X_right_full=X_right_full,
+                groups_full=groups_full,
             )
 
     print("\n[!] TESTES CONCLUIDOS.")
