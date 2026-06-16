@@ -29,30 +29,24 @@ TRANSITION_SMOOTHING_WINDOW = int(FS * 0.5)
 
 
 EXPERIMENTS_TO_RUN = [
-    "TASK_MODEL_MATRIX",
-    # "UNIFIED",
+#    "TASK_MODEL_MATRIX",
+    "UNIFIED_MODEL_MATRIX",
 ]
 
 TASK_MODELS_TO_RUN = [
-    #"CNN1Conv",
+    "CNN1Conv",
     "RF",
     "SVM",
     "KNN",
-    "LGBM",
+#    "LGBM",
 ]
 
-# Full IMU is the standard comparison.
-# ACCELEROMETER and GYROSCOPE form the sensor-modality ablation.
 TASK_MODALITIES_TO_RUN = [
     "FULL_IMU",
 #    "ACCELEROMETER",
 #    "GYROSCOPE",
 ]
 
-
-# Sensor-modality ablation.
-# Original channel order:
-# [ax, ay, az, amag, wx, wy, wz, wmag]
 MODALITY_ABLATIONS = {
 #    "ACCELEROMETER": [0, 1, 2, 3],
 #    "GYROSCOPE": [4, 5, 6, 7],
@@ -61,10 +55,19 @@ MODALITY_ABLATIONS = {
 
 MULTI_TASK_MODEL = "CNN1Conv"
 
-# Flat Task-vs-Non-Task baseline.
-# y_unified.npy contains 13 mutually exclusive macro-classes:
-# 0-3 Fall-Type, 4-7 Posture, and 8-12 Movement.
-UNIFIED_MODEL = "CNN1Conv"
+UNIFIED_MODELS_TO_RUN = [
+#    "CNN1Conv",
+    "RF",
+    "SVM",
+    "KNN",
+#    "LGBM",
+]
+
+UNIFIED_MODALITIES_TO_RUN = [
+    "FULL_IMU",
+#    "ACCELEROMETER",
+#    "GYROSCOPE",
+]
 UNIFIED_TARGET = "y_unified.npy"
 UNIFIED_NUM_CLASSES = 13
 
@@ -91,10 +94,10 @@ LIGHTGBM_PARAMS = {
     "reg_alpha": 0.0,
     "reg_lambda": 0.0,
     "random_state": 42,
+    "n_jobs": -1,
     "verbosity": -1,
 }
 
-# 
 MULTI_TASK_WEIGHTS = {
     "fall": 1.0,
     #"movement_detect": 1.0,
@@ -105,8 +108,6 @@ MULTI_TASK_WEIGHTS = {
 }
 
 RESUME_COMPLETED = True
-
-# Set True only when you intentionally want to ignore all caches and retrain.
 FORCE_RERUN = False
 
 EPOCHS = 80
@@ -120,6 +121,43 @@ PIN_MEMORY = True
 RESULTS_DIR = Path("results") / WINDOW_TAG
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+MODEL_OUTPUT_DIRS = {
+    "CNN1Conv": "cnn",
+    "CNN3B3Conv": "cnn",
+    "DeepConvLSTM": "cnn",
+    "LSTM": "cnn",
+    "MLP": "cnn",
+    "RF": "rf",
+    "SVM": "svm",
+    "KNN": "knn",
+    "LGBM": "lightgbm",
+    "LIGHTGBM": "lightgbm",
+}
+
+
+def model_results_dir(model_type):
+    key = model_type.upper()
+    normalized = {
+        "CNN1CONV": "CNN1Conv",
+        "CNN3B3CONV": "CNN3B3Conv",
+        "DEEPCONVLSTM": "DeepConvLSTM",
+        "LSTM": "LSTM",
+        "MLP": "MLP",
+        "RF": "RF",
+        "SVM": "SVM",
+        "KNN": "KNN",
+        "LGBM": "LGBM",
+        "LIGHTGBM": "LIGHTGBM",
+    }.get(key, model_type)
+
+    folder = MODEL_OUTPUT_DIRS.get(
+        normalized,
+        str(model_type).lower(),
+    )
+    path = RESULTS_DIR / folder
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 CHECKPOINT_DIR = Path("checkpoints") / WINDOW_TAG
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -129,3 +167,43 @@ elif hasattr(torch, "xpu") and torch.xpu.is_available():
     DEVICE = torch.device("xpu")
 else:
     DEVICE = torch.device("cpu")
+
+def print_experiment_summary():
+    print("=" * 72)
+    print("IPqM-Fall experiment matrix")
+    print("=" * 72)
+    print(f"Window: {WINDOW_SEC} s")
+    print(f"Stride: {STRIDE_SEC} s")
+    print(f"Sampling frequency: {FS} Hz")
+    print(f"Device: {DEVICE}")
+    print(f"Experiments: {EXPERIMENTS_TO_RUN}")
+
+    if "TASK_MODEL_MATRIX" in EXPERIMENTS_TO_RUN:
+        print(f"Tasks: {list(SINGLE_TASK_MODELS)}")
+        print(f"Models: {TASK_MODELS_TO_RUN}")
+        print(f"Modalities: {TASK_MODALITIES_TO_RUN}")
+
+        print("Result directories:")
+        for model_name in TASK_MODELS_TO_RUN:
+            folder = MODEL_OUTPUT_DIRS.get(
+                model_name,
+                model_name.lower(),
+            )
+            print(f"  {model_name}: {RESULTS_DIR / folder}")
+        print(
+            "Sensor outputs per model/modality/task: "
+            "CHEST, LEFT, RIGHT, CHEST_LEFT, CHEST_RIGHT, "
+            "LEFT_RIGHT, CHEST_LEFT_RIGHT, "
+            "ENSEMBLE_CHEST_LEFT, ENSEMBLE_CHEST_RIGHT, "
+            "ENSEMBLE_LEFT_RIGHT, ENSEMBLE_CHEST_LEFT_RIGHT"
+        )
+
+    if "UNIFIED_MODEL_MATRIX" in EXPERIMENTS_TO_RUN:
+        print(f"Unified models: {UNIFIED_MODELS_TO_RUN}")
+        print(f"Unified modalities: {UNIFIED_MODALITIES_TO_RUN}")
+        print(f"Unified classes: {UNIFIED_NUM_CLASSES}")
+
+    print(f"Resume completed work: {RESUME_COMPLETED}")
+    print(f"Force rerun: {FORCE_RERUN}")
+    print("=" * 72)
+

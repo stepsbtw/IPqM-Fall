@@ -82,14 +82,48 @@ if __name__ == "__main__":
                             experiment_tag=modality_name,
                         )
 
-        elif experiment == "UNIFIED":
-            train_unified_model(
-                model_type=config.UNIFIED_MODEL,
-                X_chest_full=X_chest_full,
-                X_left_full=X_left_full,
-                X_right_full=X_right_full,
-                groups_full=groups_full,
-            )
+        elif experiment == "UNIFIED_MODEL_MATRIX":
+            for modality_name in config.UNIFIED_MODALITIES_TO_RUN:
+                if modality_name not in config.MODALITY_ABLATIONS:
+                    raise ValueError(
+                        f"Unknown unified modality: {modality_name}"
+                    )
+
+                channel_indices = config.MODALITY_ABLATIONS[
+                    modality_name
+                ]
+
+                X_chest = select_modality(
+                    X_chest_full,
+                    channel_indices,
+                )
+                X_left = select_modality(
+                    X_left_full,
+                    channel_indices,
+                )
+                X_right = select_modality(
+                    X_right_full,
+                    channel_indices,
+                )
+
+                print(f"\n{'=' * 72}")
+                print("UNIFIED 13-CLASS MODEL MATRIX")
+                print(f"MODALITY: {modality_name}")
+                print(f"CHANNELS: {channel_indices}")
+                print(
+                    f"MODELS: {config.UNIFIED_MODELS_TO_RUN}"
+                )
+                print(f"{'=' * 72}")
+
+                for model_type in config.UNIFIED_MODELS_TO_RUN:
+                    train_unified_model(
+                        model_type=model_type,
+                        X_chest_full=X_chest,
+                        X_left_full=X_left,
+                        X_right_full=X_right,
+                        groups_full=groups_full,
+                        experiment_tag=modality_name,
+                    )
 
         else:
             raise ValueError(

@@ -19,6 +19,7 @@ def get_classical_model(model_type, num_classes=None):
             min_samples_leaf=1,
             bootstrap=True,
             random_state=42,
+            n_jobs=-1,
         )
 
     if model_type == "SVM":
@@ -40,6 +41,7 @@ def get_classical_model(model_type, num_classes=None):
             algorithm="auto",
             leaf_size=30,
             metric="euclidean",
+            n_jobs=-1,
         )
 
     if model_type == "LGBM":

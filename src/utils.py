@@ -567,7 +567,7 @@ def train_single_task(
     }
 
     result_file = (
-        config.RESULTS_DIR
+        config.model_results_dir(model_type)
         / (
             f"results_{task_name}_"
             f"{model_type.lower()}_"
@@ -985,11 +985,12 @@ def train_unified_model(
     X_left_full,
     X_right_full,
     groups_full,
+    experiment_tag="FULL_IMU",
 ):
     print(
         f"\n{'=' * 70}\n"
-        f"=== UNIFIED NON-TASK BASELINE: "
-        f"13 CLASSES ({model_type}) ===\n"
+        f"=== UNIFIED 13-CLASS BASELINE: "
+        f"{model_type} | {experiment_tag} ===\n"
         f"{'=' * 70}"
     )
     torch.backends.cudnn.benchmark = model_type in DL_MODELS
@@ -1056,8 +1057,11 @@ def train_unified_model(
     }
 
     result_file = (
-        config.RESULTS_DIR
-        / f"results_y_unified_{model_type.lower()}.json"
+        config.model_results_dir(model_type)
+        / (
+            f"results_y_unified_{model_type.lower()}_"
+            f"{experiment_tag.lower()}.json"
+        )
     )
     folds = list(
         LeaveOneGroupOut().split(
@@ -1090,7 +1094,10 @@ def train_unified_model(
         for name, X in datasets.items():
             save_dir = (
                 config.CHECKPOINT_DIR
-                / f"y_unified_{model_type.lower()}"
+                / (
+                    f"y_unified_{model_type.lower()}_"
+                    f"{experiment_tag.lower()}"
+                )
                 / name
             )
             save_dir.mkdir(parents=True, exist_ok=True)
@@ -1235,6 +1242,10 @@ def train_unified_model(
                                 config.UNIFIED_NUM_CLASSES
                             ),
                             "target": "y_unified",
+                            "experiment_tag": experiment_tag,
+                            "input_channels_per_sensor": int(
+                                X_chest_full.shape[2]
+                            ),
                         },
                         ckpt,
                     )
@@ -1349,7 +1360,10 @@ def train_unified_model(
     for name, X in datasets.items():
         final_dir = (
             config.CHECKPOINT_DIR
-            / f"y_unified_{model_type.lower()}"
+            / (
+                f"y_unified_{model_type.lower()}_"
+                f"{experiment_tag.lower()}"
+            )
             / "FINAL"
             / name
         )
@@ -1359,10 +1373,13 @@ def train_unified_model(
             model_path = final_dir / "final_model.pkl"
             scaler_path = final_dir / "scaler.pkl"
 
+            metadata_path = final_dir / "metadata.json"
+
             if (
                 _resume_enabled()
                 and model_path.exists()
                 and scaler_path.exists()
+                and metadata_path.exists()
             ):
                 print(
                     f"[SKIP] Final unified {model_type} "
@@ -1381,6 +1398,25 @@ def train_unified_model(
             model.fit(X_scaled, y)
             joblib.dump(model, model_path)
             joblib.dump(scaler, scaler_path)
+            _write_json(
+                final_dir / "metadata.json",
+                {
+                    "target": "y_unified",
+                    "model_type": model_type,
+                    "modality": experiment_tag,
+                    "num_classes": config.UNIFIED_NUM_CLASSES,
+                    "feature_set": config.CLASSICAL_FEATURE_SET,
+                    "input_channels_per_sensor": int(
+                        X_chest_full.shape[2]
+                    ),
+                    "features_per_channel": 7,
+                    "total_features": int(
+                        extract_handcrafted_features(
+                            X[:1]
+                        ).shape[1]
+                    ),
+                },
+            )
             continue
 
         final_model_path = final_dir / "final_model.pth"
@@ -1476,6 +1512,10 @@ def train_unified_model(
                     config.UNIFIED_NUM_CLASSES
                 ),
                 "target": "y_unified",
+                "experiment_tag": experiment_tag,
+                "input_channels_per_sensor": int(
+                    X_chest_full.shape[2]
+                ),
             },
             final_model_path,
         )
@@ -1528,7 +1568,7 @@ def run_multitask(
         for name in [*datasets, *LATE_FUSIONS]
     }
     result_file = (
-        config.RESULTS_DIR
+        config.model_results_dir(config.MULTI_TASK_MODEL)
         / (
             f"results_multitask_{mode}_"
             f"{config.MULTI_TASK_MODEL.lower()}.json"
