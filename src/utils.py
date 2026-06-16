@@ -246,22 +246,64 @@ def multitask_loss(predictions, targets, criteria, tasks):
     return total
 
 
-def train_multitask(model, loader, criteria, tasks, optimizer, description, leave=False):
-    progress = tqdm(range(config.EPOCHS), desc=description, leave=leave)
-    for _ in progress:
+def train_multitask(
+    model,
+    loader,
+    criteria,
+    tasks,
+    optimizer,
+    description,
+    leave=False,
+    start_epoch=0,
+    checkpoint_path=None,
+    checkpoint_metadata=None,
+):
+    progress = tqdm(
+        range(start_epoch, config.EPOCHS),
+        desc=description,
+        leave=leave,
+    )
+
+    for epoch in progress:
         model.train()
         total, batches = 0.0, 0
+
         for batch in loader:
             X = batch[0].to(config.DEVICE)
-            targets = {task: batch[i + 1].to(config.DEVICE) for i, task in enumerate(tasks)}
+            targets = {
+                task: batch[i + 1].to(config.DEVICE)
+                for i, task in enumerate(tasks)
+            }
+
             optimizer.zero_grad()
-            loss = multitask_loss(model(X), targets, criteria, tasks)
+            loss = multitask_loss(
+                model(X),
+                targets,
+                criteria,
+                tasks,
+            )
+
             if loss.requires_grad and loss.item() > 0:
                 loss.backward()
                 optimizer.step()
                 total += loss.item()
                 batches += 1
-        progress.set_postfix(loss=f"{total / batches if batches else 0.0:.4f}")
+
+        progress.set_postfix(
+            loss=(
+                f"{total / batches if batches else 0.0:.4f}"
+            )
+        )
+
+        if checkpoint_path is not None:
+            state = {
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "epoch": epoch,
+            }
+            if checkpoint_metadata:
+                state.update(checkpoint_metadata)
+            torch.save(state, checkpoint_path)
 
 
 def evaluate_multitask(model, loader, tasks):
@@ -296,21 +338,189 @@ def summarize(entry):
         entry[f"{metric}_std"] = float(np.std(values))
 
 
-def train_classical(X_train, X_test, y_train, y_test, model_type):
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(extract_handcrafted_features(X_train))
-    X_test = scaler.transform(extract_handcrafted_features(X_test))
 
-    model = models.get_classical_model(model_type)
+def _resume_enabled():
+    return bool(
+        getattr(config, "RESUME_COMPLETED", True)
+        and not getattr(config, "FORCE_RERUN", False)
+    )
+
+
+def _read_json(path):
+    with open(path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def _write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=4)
+
+
+def _fold_cache_paths(save_dir, fold, subject):
+    stem = f"fold_{fold}_subject_{subject}"
+    return {
+        "metrics": save_dir / f"{stem}_metrics.json",
+        "probabilities": save_dir / f"{stem}_probabilities.npy",
+        "model": save_dir / f"{stem}_model.pkl",
+        "scaler": save_dir / f"{stem}_scaler.pkl",
+    }
+
+
+def _load_fold_cache(save_dir, fold, subject, expected_samples):
+    if not _resume_enabled():
+        return None
+
+    paths = _fold_cache_paths(save_dir, fold, subject)
+    if not (
+        paths["metrics"].exists()
+        and paths["probabilities"].exists()
+    ):
+        return None
+
+    metrics = _read_json(paths["metrics"])
+    probabilities = np.load(paths["probabilities"])
+
+    if len(probabilities) != expected_samples:
+        print(
+            f"[CACHE INVALID] {save_dir.name} fold {fold}: "
+            f"{len(probabilities)} probabilities for "
+            f"{expected_samples} test samples."
+        )
+        return None
+
+    print(
+        f"[SKIP] Loaded completed fold {fold} "
+        f"for {save_dir.name}."
+    )
+    return metrics, probabilities
+
+
+def _save_fold_cache(
+    save_dir,
+    fold,
+    subject,
+    metrics,
+    probabilities,
+):
+    paths = _fold_cache_paths(save_dir, fold, subject)
+    _write_json(paths["metrics"], metrics)
+    np.save(paths["probabilities"], probabilities)
+
+
+def _multitask_probability_cache(save_dir, fold, subject):
+    return save_dir / (
+        f"fold_{fold}_subject_{subject}_probabilities.npz"
+    )
+
+
+def _load_multitask_probability_cache(
+    save_dir,
+    fold,
+    subject,
+    tasks,
+    expected_samples,
+):
+    if not _resume_enabled():
+        return None
+
+    path = _multitask_probability_cache(
+        save_dir,
+        fold,
+        subject,
+    )
+    if not path.exists():
+        return None
+
+    with np.load(path) as cached:
+        if not all(task in cached for task in tasks):
+            return None
+        probabilities = {
+            task: cached[task]
+            for task in tasks
+        }
+
+    if any(
+        len(values) != expected_samples
+        for values in probabilities.values()
+    ):
+        return None
+
+    print(
+        f"[SKIP] Loaded completed multitask fold {fold} "
+        f"for {save_dir.name}."
+    )
+    return probabilities
+
+
+def _save_multitask_probability_cache(
+    save_dir,
+    fold,
+    subject,
+    probabilities,
+):
+    path = _multitask_probability_cache(
+        save_dir,
+        fold,
+        subject,
+    )
+    np.savez(path, **probabilities)
+
+def train_classical(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    model_type,
+    model_path=None,
+    scaler_path=None,
+):
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(
+        extract_handcrafted_features(X_train)
+    )
+    X_test = scaler.transform(
+        extract_handcrafted_features(X_test)
+    )
+
+    observed_classes = np.unique(y_train)
+    num_classes = len(observed_classes)
+
+    if num_classes < 2:
+        raise ValueError(
+            f"{model_type}: training partition contains only "
+            f"{num_classes} class: {observed_classes.tolist()}."
+        )
+
+    model = models.get_classical_model(
+        model_type=model_type,
+        num_classes=num_classes,
+    )
     model.fit(X_train, y_train)
 
     predictions = model.predict(X_test)
     probabilities = model.predict_proba(X_test)
 
+    if model_path is not None:
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, model_path)
+
+    if scaler_path is not None:
+        scaler_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(scaler, scaler_path)
+
     return compute_metrics(y_test, predictions), probabilities
 
 
-def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_full, groups_full, experiment_tag="FULL_IMU"):
+def train_single_task(
+    task_name,
+    model_type,
+    X_chest_full,
+    X_left_full,
+    X_right_full,
+    groups_full,
+    experiment_tag="FULL_IMU",
+):
     print(
         f"\n{'=' * 60}\n"
         f"=== TAREFA: {task_name.upper()} | MODELO: {model_type} "
@@ -319,190 +529,517 @@ def train_single_task(task_name, model_type, X_chest_full, X_left_full, X_right_
     )
     torch.backends.cudnn.benchmark = model_type in DL_MODELS
 
-    y_full = np.load(config.WINDOWED_DATASET_DIR / f"{task_name}.npy")
+    y_full = np.load(
+        config.WINDOWED_DATASET_DIR / f"{task_name}.npy"
+    )
     valid = y_full != -1
     y = y_full[valid]
+
     if len(y) == 0:
-        print(f"Nenhuma instância válida para {task_name}. Pulando...")
+        print(
+            f"Nenhuma instância válida para {task_name}. "
+            "Pulando..."
+        )
         return
 
     groups = groups_full[valid]
-    datasets = sensor_sets(X_chest_full[valid], X_left_full[valid], X_right_full[valid])
+    datasets = sensor_sets(
+        X_chest_full[valid],
+        X_left_full[valid],
+        X_right_full[valid],
+    )
+
     results = {
         name: {
             "folds": [],
             "model_type": model_type,
             "modality": experiment_tag,
-            "feature_set": config.CLASSICAL_FEATURE_SET
-            if model_type in CLASSICAL_MODELS
-            else "RAW_SEQUENCE",
-            "input_channels_per_sensor": int(X_chest_full.shape[2]),
+            "feature_set": (
+                config.CLASSICAL_FEATURE_SET
+                if model_type in CLASSICAL_MODELS
+                else "RAW_SEQUENCE"
+            ),
+            "input_channels_per_sensor": int(
+                X_chest_full.shape[2]
+            ),
         }
         for name in [*datasets, *LATE_FUSIONS]
     }
+
     result_file = (
         config.RESULTS_DIR
-        / f"results_{task_name}_{model_type.lower()}_{experiment_tag.lower()}.json"
+        / (
+            f"results_{task_name}_"
+            f"{model_type.lower()}_"
+            f"{experiment_tag.lower()}.json"
+        )
     )
-    folds = LeaveOneGroupOut().split(datasets["CHEST"], y, groups)
 
-    for fold, (train_idx, test_idx) in enumerate(tqdm(list(folds), desc=f"LOSO CV - {task_name} ({model_type})"), 1):
+    folds = list(
+        LeaveOneGroupOut().split(
+            datasets["CHEST"],
+            y,
+            groups,
+        )
+    )
+
+    for fold, (train_idx, test_idx) in enumerate(
+        tqdm(
+            folds,
+            desc=f"LOSO CV - {task_name} ({model_type})",
+        ),
+        1,
+    ):
         subject = groups[test_idx][0]
         fold_probs = {}
+
         for name, X in datasets.items():
             save_dir = (
                 config.CHECKPOINT_DIR
-                / f"{task_name}_{model_type.lower()}_{experiment_tag.lower()}"
+                / (
+                    f"{task_name}_"
+                    f"{model_type.lower()}_"
+                    f"{experiment_tag.lower()}"
+                )
                 / name
             )
             save_dir.mkdir(parents=True, exist_ok=True)
 
-            if model_type in CLASSICAL_MODELS:
+            cached = _load_fold_cache(
+                save_dir,
+                fold,
+                subject,
+                expected_samples=len(test_idx),
+            )
+
+            if cached is not None:
+                metrics, probs = cached
+            elif model_type in CLASSICAL_MODELS:
+                cache_paths = _fold_cache_paths(
+                    save_dir,
+                    fold,
+                    subject,
+                )
                 metrics, probs = train_classical(
                     X[train_idx],
                     X[test_idx],
                     y[train_idx],
                     y[test_idx],
                     model_type,
+                    model_path=cache_paths["model"],
+                    scaler_path=cache_paths["scaler"],
+                )
+                _save_fold_cache(
+                    save_dir,
+                    fold,
+                    subject,
+                    metrics,
+                    probs,
                 )
             else:
-                ckpt = save_dir / f"{name}_fold_{fold}_subject_{subject}.pth"
-                X_train, X_test = prepare_data(X[train_idx], model_type, save_dir, X[test_idx], f"{name}_fold_{fold}_")
+                ckpt = save_dir / (
+                    f"{name}_fold_{fold}_"
+                    f"subject_{subject}.pth"
+                )
+
+                X_train, X_test = prepare_data(
+                    X[train_idx],
+                    model_type,
+                    save_dir,
+                    X[test_idx],
+                    f"{name}_fold_{fold}_",
+                )
                 n_classes = int(np.max(y[train_idx])) + 1
-                model = create_model(model_type, X_train, n_classes)
-                if torch.cuda.device_count() > 1 and config.DEVICE.type == "cuda":
+                model = create_model(
+                    model_type,
+                    X_train,
+                    n_classes,
+                )
+
+                if (
+                    torch.cuda.device_count() > 1
+                    and config.DEVICE.type == "cuda"
+                ):
                     model = nn.DataParallel(model)
-                train_loader = make_loader(X_train, y[train_idx], config.BATCH_SIZE, True, workers=True)
-                test_loader = make_loader(X_test, y[test_idx], config.BATCH_SIZE, False)
-                criterion = nn.CrossEntropyLoss(weight=class_weights(y[train_idx], n_classes))
-                optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+
+                train_loader = make_loader(
+                    X_train,
+                    y[train_idx],
+                    config.BATCH_SIZE,
+                    True,
+                    workers=True,
+                )
+                test_loader = make_loader(
+                    X_test,
+                    y[test_idx],
+                    config.BATCH_SIZE,
+                    False,
+                )
+                criterion = nn.CrossEntropyLoss(
+                    weight=class_weights(
+                        y[train_idx],
+                        n_classes,
+                    )
+                )
+                optimizer = torch.optim.Adam(
+                    model.parameters(),
+                    lr=config.LEARNING_RATE,
+                )
 
                 start = 0
-                if ckpt.exists():
-                    state = torch.load(ckpt, map_location=config.DEVICE)
-                    (model.module if isinstance(model, nn.DataParallel) else model).load_state_dict(state["model_state"])
-                    optimizer.load_state_dict(state["optimizer_state"])
-                    start = state["epoch"] + 1
+                if _resume_enabled() and ckpt.exists():
+                    state = torch.load(
+                        ckpt,
+                        map_location=config.DEVICE,
+                    )
+                    base = (
+                        model.module
+                        if isinstance(model, nn.DataParallel)
+                        else model
+                    )
+                    base.load_state_dict(
+                        state["model_state"]
+                    )
+                    optimizer.load_state_dict(
+                        state["optimizer_state"]
+                    )
+                    start = int(state["epoch"]) + 1
+                    print(
+                        f"[RESUME] {name} fold {fold} "
+                        f"from epoch {start}."
+                    )
 
-                progress = tqdm(range(start, config.EPOCHS), desc=f"{name} Fold {fold}", leave=False)
+                progress = tqdm(
+                    range(start, config.EPOCHS),
+                    desc=f"{name} Fold {fold}",
+                    leave=False,
+                )
+
                 for epoch in progress:
-                    progress.set_postfix(loss=f"{single_epoch(model, train_loader, criterion, optimizer):.4f}")
-                    torch.save({
-                        "model_state": (model.module if isinstance(model, nn.DataParallel) else model).state_dict(),
-                        "optimizer_state": optimizer.state_dict(), "epoch": epoch,
-                        "sensor_name": name,
-                        "fold": fold,
-                        "model_type": model_type,
-                        "experiment_tag": experiment_tag,
-                        "input_channels_per_sensor": int(X_chest_full.shape[2]),
-                    }, ckpt)
-                state = torch.load(ckpt, map_location=config.DEVICE)
-                (model.module if isinstance(model, nn.DataParallel) else model).load_state_dict(state["model_state"])
-                metrics, probs = evaluate_single(model, test_loader)
+                    loss = single_epoch(
+                        model,
+                        train_loader,
+                        criterion,
+                        optimizer,
+                    )
+                    progress.set_postfix(
+                        loss=f"{loss:.4f}"
+                    )
+                    base = (
+                        model.module
+                        if isinstance(model, nn.DataParallel)
+                        else model
+                    )
+                    torch.save(
+                        {
+                            "model_state": (
+                                base.state_dict()
+                            ),
+                            "optimizer_state": (
+                                optimizer.state_dict()
+                            ),
+                            "epoch": epoch,
+                            "sensor_name": name,
+                            "fold": fold,
+                            "model_type": model_type,
+                            "experiment_tag": experiment_tag,
+                            "input_channels_per_sensor": int(
+                                X_chest_full.shape[2]
+                            ),
+                        },
+                        ckpt,
+                    )
+
+                state = torch.load(
+                    ckpt,
+                    map_location=config.DEVICE,
+                )
+                base = (
+                    model.module
+                    if isinstance(model, nn.DataParallel)
+                    else model
+                )
+                base.load_state_dict(
+                    state["model_state"]
+                )
+                metrics, probs = evaluate_single(
+                    model,
+                    test_loader,
+                )
+                _save_fold_cache(
+                    save_dir,
+                    fold,
+                    subject,
+                    metrics,
+                    probs,
+                )
 
             fold_probs[name] = probs
-            metrics.update({"fold": fold, "test_subject": str(subject)})
+            metrics = dict(metrics)
+            metrics.update(
+                {
+                    "fold": fold,
+                    "test_subject": str(subject),
+                }
+            )
             results[name]["folds"].append(metrics)
 
         for fusion, sensors in LATE_FUSIONS.items():
-            probs = sum(fold_probs[s] for s in sensors) / len(sensors)
-            preds = np.argmax(probs, axis=1) if probs.ndim > 1 and probs.shape[1] > 1 else (probs >= 0.5).astype(int)
-            metrics = compute_metrics(y[test_idx], preds)
-            metrics.update({"fold": fold, "test_subject": str(subject)})
+            probs = (
+                sum(fold_probs[s] for s in sensors)
+                / len(sensors)
+            )
+            preds = np.argmax(probs, axis=1)
+            metrics = compute_metrics(
+                y[test_idx],
+                preds,
+            )
+            metrics.update(
+                {
+                    "fold": fold,
+                    "test_subject": str(subject),
+                }
+            )
             results[fusion]["folds"].append(metrics)
-        with open(result_file, "w") as f:
-            json.dump(results, f, indent=4)
+
+        _write_json(result_file, results)
 
     for entry in results.values():
         summarize(entry)
-    with open(result_file, "w") as f:
-        json.dump(results, f, indent=4)
 
-    print("\nTraining FINAL models on all 15 subjects...\n")
+    _write_json(result_file, results)
+
+    print(
+        f"\nTraining FINAL models on all "
+        f"{len(np.unique(groups))} available subjects...\n"
+    )
+
     for name, X in datasets.items():
         final_dir = (
             config.CHECKPOINT_DIR
-            / f"{task_name}_{model_type.lower()}_{experiment_tag.lower()}"
+            / (
+                f"{task_name}_"
+                f"{model_type.lower()}_"
+                f"{experiment_tag.lower()}"
+            )
             / "FINAL"
             / name
         )
         final_dir.mkdir(parents=True, exist_ok=True)
+
         if model_type in CLASSICAL_MODELS:
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(extract_handcrafted_features(X))
-            model = models.get_classical_model(model_type)
-            model.fit(X_scaled, y)
-            joblib.dump(model, final_dir / "final_model.pkl")
-            joblib.dump(scaler, final_dir / "scaler.pkl")
-            with open(
-                final_dir / "metadata.json",
-                "w",
-                encoding="utf-8",
-            ) as f:
-                json.dump(
-                    {
-                        "task_name": task_name,
-                        "model_type": model_type,
-                        "modality": experiment_tag,
-                        "feature_set": config.CLASSICAL_FEATURE_SET,
-                        "input_channels_per_sensor": int(
-                            X_chest_full.shape[2]
-                        ),
-                        "features_per_channel": 7,
-                        "total_features": int(
-                            extract_handcrafted_features(X[:1]).shape[1]
-                        ),
-                    },
-                    f,
-                    indent=4,
+            model_path = final_dir / "final_model.pkl"
+            scaler_path = final_dir / "scaler.pkl"
+            metadata_path = final_dir / "metadata.json"
+
+            if (
+                _resume_enabled()
+                and model_path.exists()
+                and scaler_path.exists()
+                and metadata_path.exists()
+            ):
+                print(
+                    f"[SKIP] Final {model_type} model "
+                    f"already exists for {name}."
                 )
+                continue
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(
+                extract_handcrafted_features(X)
+            )
+            model = models.get_classical_model(
+                model_type=model_type,
+                num_classes=len(np.unique(y)),
+            )
+            model.fit(X_scaled, y)
+            joblib.dump(model, model_path)
+            joblib.dump(scaler, scaler_path)
+            _write_json(
+                metadata_path,
+                {
+                    "task_name": task_name,
+                    "model_type": model_type,
+                    "modality": experiment_tag,
+                    "feature_set": (
+                        config.CLASSICAL_FEATURE_SET
+                    ),
+                    "input_channels_per_sensor": int(
+                        X_chest_full.shape[2]
+                    ),
+                    "features_per_channel": 7,
+                    "total_features": int(
+                        extract_handcrafted_features(
+                            X[:1]
+                        ).shape[1]
+                    ),
+                },
+            )
             continue
 
-        X_train, _ = prepare_data(X, model_type, final_dir)
+        final_model_path = final_dir / "final_model.pth"
+        training_state_path = (
+            final_dir / "final_training_state.pth"
+        )
+
+        if (
+            _resume_enabled()
+            and final_model_path.exists()
+        ):
+            print(
+                f"[SKIP] Final neural model already "
+                f"exists for {name}."
+            )
+            continue
+
+        X_train, _ = prepare_data(
+            X,
+            model_type,
+            final_dir,
+        )
         n_classes = int(np.max(y)) + 1
-        model = create_model(model_type, X_train, n_classes)
-        loader = make_loader(X_train, y, config.BATCH_SIZE, True, workers=True)
-        criterion = nn.CrossEntropyLoss(weight=class_weights(y, n_classes))
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
-        for _ in tqdm(range(config.EPOCHS), desc=f"FINAL {name}"):
-            single_epoch(model, loader, criterion, optimizer)
+        model = create_model(
+            model_type,
+            X_train,
+            n_classes,
+        )
+        loader = make_loader(
+            X_train,
+            y,
+            config.BATCH_SIZE,
+            True,
+            workers=True,
+        )
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights(
+                y,
+                n_classes,
+            )
+        )
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config.LEARNING_RATE,
+        )
+
+        start = 0
+        if (
+            _resume_enabled()
+            and training_state_path.exists()
+        ):
+            state = torch.load(
+                training_state_path,
+                map_location=config.DEVICE,
+            )
+            model.load_state_dict(
+                state["model_state"]
+            )
+            optimizer.load_state_dict(
+                state["optimizer_state"]
+            )
+            start = int(state["epoch"]) + 1
+            print(
+                f"[RESUME] FINAL {name} "
+                f"from epoch {start}."
+            )
+
+        for epoch in tqdm(
+            range(start, config.EPOCHS),
+            desc=f"FINAL {name}",
+        ):
+            single_epoch(
+                model,
+                loader,
+                criterion,
+                optimizer,
+            )
+            torch.save(
+                {
+                    "model_state": model.state_dict(),
+                    "optimizer_state": (
+                        optimizer.state_dict()
+                    ),
+                    "epoch": epoch,
+                },
+                training_state_path,
+            )
+
         torch.save(
             {
                 "model_state": model.state_dict(),
                 "model_type": model_type,
                 "num_classes": n_classes,
                 "experiment_tag": experiment_tag,
-                "input_channels_per_sensor": int(X_chest_full.shape[2]),
+                "input_channels_per_sensor": int(
+                    X_chest_full.shape[2]
+                ),
             },
-            final_dir / "final_model.pth",
+            final_model_path,
         )
-    print("FINAL models saved.")
+
+    print("FINAL models saved or reused.")
 
 
-def train_unified_model(model_type, X_chest_full, X_left_full, X_right_full, groups_full):
-    print(f"\n{'=' * 70}\n=== UNIFIED NON-TASK BASELINE: 13 CLASSES ({model_type}) ===\n{'=' * 70}")
+def train_unified_model(
+    model_type,
+    X_chest_full,
+    X_left_full,
+    X_right_full,
+    groups_full,
+):
+    print(
+        f"\n{'=' * 70}\n"
+        f"=== UNIFIED NON-TASK BASELINE: "
+        f"13 CLASSES ({model_type}) ===\n"
+        f"{'=' * 70}"
+    )
     torch.backends.cudnn.benchmark = model_type in DL_MODELS
 
-    target_path = config.WINDOWED_DATASET_DIR / config.UNIFIED_TARGET
+    target_path = (
+        config.WINDOWED_DATASET_DIR
+        / config.UNIFIED_TARGET
+    )
     if not target_path.exists():
-        raise FileNotFoundError(f"Unified target not found: {target_path}")
+        raise FileNotFoundError(
+            f"Unified target not found: {target_path}"
+        )
 
     y_full = np.load(target_path)
-    if not (len(y_full) == len(groups_full) == len(X_chest_full) == len(X_left_full) == len(X_right_full)):
-        raise ValueError("X, groups, and y_unified must have the same length.")
+    if not (
+        len(y_full)
+        == len(groups_full)
+        == len(X_chest_full)
+        == len(X_left_full)
+        == len(X_right_full)
+    ):
+        raise ValueError(
+            "X, groups, and y_unified must have "
+            "the same length."
+        )
 
     valid = y_full >= 0
     y = y_full[valid].astype(np.int64)
     groups = groups_full[valid]
-    datasets = sensor_sets(X_chest_full[valid], X_left_full[valid], X_right_full[valid])
+    datasets = sensor_sets(
+        X_chest_full[valid],
+        X_left_full[valid],
+        X_right_full[valid],
+    )
 
+    expected = set(
+        range(config.UNIFIED_NUM_CLASSES)
+    )
     observed = set(np.unique(y).tolist())
-    expected = set(range(config.UNIFIED_NUM_CLASSES))
     if observed != expected:
-        raise ValueError(f"Expected unified classes 0..12, observed {sorted(observed)}")
+        raise ValueError(
+            f"Expected unified classes 0..12, "
+            f"observed {sorted(observed)}"
+        )
 
     print(f"Valid unified samples: {len(y)}")
-    print(f"Ignored transition samples: {int((~valid).sum())}")
+    print(
+        f"Ignored transition samples: "
+        f"{int((~valid).sum())}"
+    )
 
     names = [*datasets, *LATE_FUSIONS]
     results = {
@@ -517,187 +1054,819 @@ def train_unified_model(model_type, X_chest_full, X_left_full, X_right_full, gro
         }
         for name in names
     }
-    result_file = config.RESULTS_DIR / f"results_y_unified_{model_type.lower()}.json"
-    folds = list(LeaveOneGroupOut().split(datasets["CHEST"], y, groups))
 
-    for fold, (train_idx, test_idx) in enumerate(tqdm(folds, desc=f"LOSO CV - y_unified ({model_type})"), 1):
+    result_file = (
+        config.RESULTS_DIR
+        / f"results_y_unified_{model_type.lower()}.json"
+    )
+    folds = list(
+        LeaveOneGroupOut().split(
+            datasets["CHEST"],
+            y,
+            groups,
+        )
+    )
+
+    for fold, (train_idx, test_idx) in enumerate(
+        tqdm(
+            folds,
+            desc=f"LOSO CV - y_unified ({model_type})",
+        ),
+        1,
+    ):
         subject = groups[test_idx][0]
         fold_probs = {}
-        train_classes = set(np.unique(y[train_idx]).tolist())
+        train_classes = set(
+            np.unique(y[train_idx]).tolist()
+        )
+
         if train_classes != expected:
-            raise ValueError(f"Fold {fold} training partition missing classes: {sorted(expected - train_classes)}")
+            raise ValueError(
+                f"Fold {fold} training partition "
+                f"missing classes: "
+                f"{sorted(expected - train_classes)}"
+            )
 
         for name, X in datasets.items():
-            save_dir = config.CHECKPOINT_DIR / f"y_unified_{model_type.lower()}" / name
+            save_dir = (
+                config.CHECKPOINT_DIR
+                / f"y_unified_{model_type.lower()}"
+                / name
+            )
             save_dir.mkdir(parents=True, exist_ok=True)
 
-            if model_type in CLASSICAL_MODELS:
-                native, probs = train_classical(X[train_idx], X[test_idx], y[train_idx], y[test_idx])
+            cached = _load_fold_cache(
+                save_dir,
+                fold,
+                subject,
+                expected_samples=len(test_idx),
+            )
+
+            if cached is not None:
+                native, probs = cached
+            elif model_type in CLASSICAL_MODELS:
+                cache_paths = _fold_cache_paths(
+                    save_dir,
+                    fold,
+                    subject,
+                )
+                native, probs = train_classical(
+                    X[train_idx],
+                    X[test_idx],
+                    y[train_idx],
+                    y[test_idx],
+                    model_type,
+                    model_path=cache_paths["model"],
+                    scaler_path=cache_paths["scaler"],
+                )
+                _save_fold_cache(
+                    save_dir,
+                    fold,
+                    subject,
+                    native,
+                    probs,
+                )
             else:
-                ckpt = save_dir / f"{name}_fold_{fold}_subject_{subject}.pth"
-                X_train, X_test = prepare_data(X[train_idx], model_type, save_dir, X[test_idx], f"{name}_fold_{fold}_")
-                model = create_model(model_type, X_train, config.UNIFIED_NUM_CLASSES)
-                if torch.cuda.device_count() > 1 and config.DEVICE.type == "cuda":
+                ckpt = save_dir / (
+                    f"{name}_fold_{fold}_"
+                    f"subject_{subject}.pth"
+                )
+
+                X_train, X_test = prepare_data(
+                    X[train_idx],
+                    model_type,
+                    save_dir,
+                    X[test_idx],
+                    f"{name}_fold_{fold}_",
+                )
+                model = create_model(
+                    model_type,
+                    X_train,
+                    config.UNIFIED_NUM_CLASSES,
+                )
+
+                if (
+                    torch.cuda.device_count() > 1
+                    and config.DEVICE.type == "cuda"
+                ):
                     model = nn.DataParallel(model)
-                train_loader = make_loader(X_train, y[train_idx], config.BATCH_SIZE, True, workers=True)
-                test_loader = make_loader(X_test, y[test_idx], config.BATCH_SIZE, False)
-                criterion = nn.CrossEntropyLoss(weight=class_weights(y[train_idx], config.UNIFIED_NUM_CLASSES))
-                optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+
+                train_loader = make_loader(
+                    X_train,
+                    y[train_idx],
+                    config.BATCH_SIZE,
+                    True,
+                    workers=True,
+                )
+                test_loader = make_loader(
+                    X_test,
+                    y[test_idx],
+                    config.BATCH_SIZE,
+                    False,
+                )
+                criterion = nn.CrossEntropyLoss(
+                    weight=class_weights(
+                        y[train_idx],
+                        config.UNIFIED_NUM_CLASSES,
+                    )
+                )
+                optimizer = torch.optim.Adam(
+                    model.parameters(),
+                    lr=config.LEARNING_RATE,
+                )
 
                 start = 0
-                if ckpt.exists():
-                    state = torch.load(ckpt, map_location=config.DEVICE)
-                    base = model.module if isinstance(model, nn.DataParallel) else model
-                    base.load_state_dict(state["model_state"])
-                    optimizer.load_state_dict(state["optimizer_state"])
-                    start = state["epoch"] + 1
+                if _resume_enabled() and ckpt.exists():
+                    state = torch.load(
+                        ckpt,
+                        map_location=config.DEVICE,
+                    )
+                    base = (
+                        model.module
+                        if isinstance(model, nn.DataParallel)
+                        else model
+                    )
+                    base.load_state_dict(
+                        state["model_state"]
+                    )
+                    optimizer.load_state_dict(
+                        state["optimizer_state"]
+                    )
+                    start = int(state["epoch"]) + 1
+                    print(
+                        f"[RESUME] {name} fold {fold} "
+                        f"from epoch {start}."
+                    )
 
-                progress = tqdm(range(start, config.EPOCHS), desc=f"{name} Fold {fold}", leave=False)
+                progress = tqdm(
+                    range(start, config.EPOCHS),
+                    desc=f"{name} Fold {fold}",
+                    leave=False,
+                )
+
                 for epoch in progress:
-                    loss = single_epoch(model, train_loader, criterion, optimizer)
-                    progress.set_postfix(loss=f"{loss:.4f}")
-                    base = model.module if isinstance(model, nn.DataParallel) else model
-                    torch.save({
-                        "model_state": base.state_dict(),
-                        "optimizer_state": optimizer.state_dict(),
-                        "epoch": epoch,
-                        "sensor_name": name,
-                        "fold": fold,
-                        "model_type": model_type,
-                        "num_classes": config.UNIFIED_NUM_CLASSES,
-                        "target": "y_unified",
-                    }, ckpt)
+                    loss = single_epoch(
+                        model,
+                        train_loader,
+                        criterion,
+                        optimizer,
+                    )
+                    progress.set_postfix(
+                        loss=f"{loss:.4f}"
+                    )
+                    base = (
+                        model.module
+                        if isinstance(model, nn.DataParallel)
+                        else model
+                    )
+                    torch.save(
+                        {
+                            "model_state": (
+                                base.state_dict()
+                            ),
+                            "optimizer_state": (
+                                optimizer.state_dict()
+                            ),
+                            "epoch": epoch,
+                            "sensor_name": name,
+                            "fold": fold,
+                            "model_type": model_type,
+                            "num_classes": (
+                                config.UNIFIED_NUM_CLASSES
+                            ),
+                            "target": "y_unified",
+                        },
+                        ckpt,
+                    )
 
-                state = torch.load(ckpt, map_location=config.DEVICE)
-                base = model.module if isinstance(model, nn.DataParallel) else model
-                base.load_state_dict(state["model_state"])
-                native, probs = evaluate_single(model, test_loader)
+                state = torch.load(
+                    ckpt,
+                    map_location=config.DEVICE,
+                )
+                base = (
+                    model.module
+                    if isinstance(model, nn.DataParallel)
+                    else model
+                )
+                base.load_state_dict(
+                    state["model_state"]
+                )
+                native, probs = evaluate_single(
+                    model,
+                    test_loader,
+                )
+                _save_fold_cache(
+                    save_dir,
+                    fold,
+                    subject,
+                    native,
+                    probs,
+                )
 
             preds = np.argmax(probs, axis=1)
             fold_probs[name] = probs
-            native.update({"fold": fold, "test_subject": str(subject), "valid_samples": int(len(test_idx))})
-            results[name]["native"]["folds"].append(native)
-            mapped = compute_unified_mapped_metrics(y[test_idx], preds)
+
+            native = dict(native)
+            native.update(
+                {
+                    "fold": fold,
+                    "test_subject": str(subject),
+                    "valid_samples": int(len(test_idx)),
+                }
+            )
+            results[name]["native"]["folds"].append(
+                native
+            )
+
+            mapped = compute_unified_mapped_metrics(
+                y[test_idx],
+                preds,
+            )
             for task, metrics in mapped.items():
-                metrics.update({"fold": fold, "test_subject": str(subject)})
-                results[name]["mapped"][task]["folds"].append(metrics)
+                metrics.update(
+                    {
+                        "fold": fold,
+                        "test_subject": str(subject),
+                    }
+                )
+                results[name]["mapped"][task][
+                    "folds"
+                ].append(metrics)
 
         for fusion, sensors in LATE_FUSIONS.items():
-            probs = sum(fold_probs[s] for s in sensors) / len(sensors)
+            probs = (
+                sum(fold_probs[s] for s in sensors)
+                / len(sensors)
+            )
             preds = np.argmax(probs, axis=1)
-            native = compute_metrics(y[test_idx], preds)
-            native.update({"fold": fold, "test_subject": str(subject), "valid_samples": int(len(test_idx))})
-            results[fusion]["native"]["folds"].append(native)
-            mapped = compute_unified_mapped_metrics(y[test_idx], preds)
-            for task, metrics in mapped.items():
-                metrics.update({"fold": fold, "test_subject": str(subject)})
-                results[fusion]["mapped"][task]["folds"].append(metrics)
 
-        with open(result_file, "w") as f:
-            json.dump(results, f, indent=4)
+            native = compute_metrics(
+                y[test_idx],
+                preds,
+            )
+            native.update(
+                {
+                    "fold": fold,
+                    "test_subject": str(subject),
+                    "valid_samples": int(len(test_idx)),
+                }
+            )
+            results[fusion]["native"]["folds"].append(
+                native
+            )
+
+            mapped = compute_unified_mapped_metrics(
+                y[test_idx],
+                preds,
+            )
+            for task, metrics in mapped.items():
+                metrics.update(
+                    {
+                        "fold": fold,
+                        "test_subject": str(subject),
+                    }
+                )
+                results[fusion]["mapped"][task][
+                    "folds"
+                ].append(metrics)
+
+        _write_json(result_file, results)
 
     for cfg_results in results.values():
         summarize(cfg_results["native"])
-        for task_results in cfg_results["mapped"].values():
+        for task_results in (
+            cfg_results["mapped"].values()
+        ):
             summarize(task_results)
-    with open(result_file, "w") as f:
-        json.dump(results, f, indent=4)
 
-    print("\nTraining FINAL unified models on all valid samples...\n")
+    _write_json(result_file, results)
+
+    print(
+        "\nTraining FINAL unified models "
+        "on all valid samples...\n"
+    )
+
     for name, X in datasets.items():
-        final_dir = config.CHECKPOINT_DIR / f"y_unified_{model_type.lower()}" / "FINAL" / name
+        final_dir = (
+            config.CHECKPOINT_DIR
+            / f"y_unified_{model_type.lower()}"
+            / "FINAL"
+            / name
+        )
         final_dir.mkdir(parents=True, exist_ok=True)
-        X_train, _ = prepare_data(X, model_type, final_dir)
-        model = create_model(model_type, X_train, config.UNIFIED_NUM_CLASSES)
-        loader = make_loader(X_train, y, config.BATCH_SIZE, True, workers=True)
-        criterion = nn.CrossEntropyLoss(weight=class_weights(y, config.UNIFIED_NUM_CLASSES))
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
-        for _ in tqdm(range(config.EPOCHS), desc=f"FINAL UNIFIED {name}"):
-            single_epoch(model, loader, criterion, optimizer)
-        torch.save({
-            "model_state": model.state_dict(),
-            "model_type": model_type,
-            "num_classes": config.UNIFIED_NUM_CLASSES,
-            "target": "y_unified",
-        }, final_dir / "final_model.pth")
 
-    print(f"Unified results saved to: {result_file}")
+        if model_type in CLASSICAL_MODELS:
+            model_path = final_dir / "final_model.pkl"
+            scaler_path = final_dir / "scaler.pkl"
+
+            if (
+                _resume_enabled()
+                and model_path.exists()
+                and scaler_path.exists()
+            ):
+                print(
+                    f"[SKIP] Final unified {model_type} "
+                    f"model already exists for {name}."
+                )
+                continue
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(
+                extract_handcrafted_features(X)
+            )
+            model = models.get_classical_model(
+                model_type=model_type,
+                num_classes=config.UNIFIED_NUM_CLASSES,
+            )
+            model.fit(X_scaled, y)
+            joblib.dump(model, model_path)
+            joblib.dump(scaler, scaler_path)
+            continue
+
+        final_model_path = final_dir / "final_model.pth"
+        training_state_path = (
+            final_dir / "final_training_state.pth"
+        )
+
+        if (
+            _resume_enabled()
+            and final_model_path.exists()
+        ):
+            print(
+                f"[SKIP] Final unified neural model "
+                f"already exists for {name}."
+            )
+            continue
+
+        X_train, _ = prepare_data(
+            X,
+            model_type,
+            final_dir,
+        )
+        model = create_model(
+            model_type,
+            X_train,
+            config.UNIFIED_NUM_CLASSES,
+        )
+        loader = make_loader(
+            X_train,
+            y,
+            config.BATCH_SIZE,
+            True,
+            workers=True,
+        )
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights(
+                y,
+                config.UNIFIED_NUM_CLASSES,
+            )
+        )
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config.LEARNING_RATE,
+        )
+
+        start = 0
+        if (
+            _resume_enabled()
+            and training_state_path.exists()
+        ):
+            state = torch.load(
+                training_state_path,
+                map_location=config.DEVICE,
+            )
+            model.load_state_dict(
+                state["model_state"]
+            )
+            optimizer.load_state_dict(
+                state["optimizer_state"]
+            )
+            start = int(state["epoch"]) + 1
+            print(
+                f"[RESUME] FINAL UNIFIED {name} "
+                f"from epoch {start}."
+            )
+
+        for epoch in tqdm(
+            range(start, config.EPOCHS),
+            desc=f"FINAL UNIFIED {name}",
+        ):
+            single_epoch(
+                model,
+                loader,
+                criterion,
+                optimizer,
+            )
+            torch.save(
+                {
+                    "model_state": model.state_dict(),
+                    "optimizer_state": (
+                        optimizer.state_dict()
+                    ),
+                    "epoch": epoch,
+                },
+                training_state_path,
+            )
+
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "model_type": model_type,
+                "num_classes": (
+                    config.UNIFIED_NUM_CLASSES
+                ),
+                "target": "y_unified",
+            },
+            final_model_path,
+        )
+
+    print(
+        f"Unified results saved to: {result_file}"
+    )
 
 
+def run_multitask(
+    mode,
+    X_chest_full,
+    X_left_full,
+    X_right_full,
+    groups_full,
+):
+    print(
+        f"\n{'=' * 60}\n"
+        f"=== INICIANDO MULTI-TASK & "
+        f"FUSÃO DE SENSORES ({mode}) ===\n"
+        f"Arquitetura Base: "
+        f"{config.MULTI_TASK_MODEL}\n"
+        f"{'=' * 60}"
+    )
 
-def run_multitask(mode, X_chest_full, X_left_full, X_right_full, groups_full):
-    print(f"\n{'=' * 60}\n=== INICIANDO MULTI-TASK & FUSÃO DE SENSORES ({mode}) ===\nArquitetura Base: {config.MULTI_TASK_MODEL}\n{'=' * 60}")
     if mode not in MULTITASK_CONFIGS:
-        raise ValueError(f"Modo Multitarefa Inválido: {mode}")
+        raise ValueError(
+            f"Modo Multitarefa Inválido: {mode}"
+        )
 
     n_classes = MULTITASK_CONFIGS[mode]
     tasks = list(n_classes)
-    targets = {task: np.load(config.WINDOWED_DATASET_DIR / TARGET_FILES[task]) for task in tasks}
-    datasets = sensor_sets(X_chest_full, X_left_full, X_right_full)
-    results = {name: {task: {"folds": []} for task in tasks} for name in [*datasets, *LATE_FUSIONS]}
-    result_file = config.RESULTS_DIR / f"results_multitask_{mode}_{config.MULTI_TASK_MODEL.lower()}.json"
-    folds = LeaveOneGroupOut().split(X_chest_full, groups_full, groups_full)
+    targets = {
+        task: np.load(
+            config.WINDOWED_DATASET_DIR
+            / TARGET_FILES[task]
+        )
+        for task in tasks
+    }
+    datasets = sensor_sets(
+        X_chest_full,
+        X_left_full,
+        X_right_full,
+    )
+    results = {
+        name: {
+            task: {"folds": []}
+            for task in tasks
+        }
+        for name in [*datasets, *LATE_FUSIONS]
+    }
+    result_file = (
+        config.RESULTS_DIR
+        / (
+            f"results_multitask_{mode}_"
+            f"{config.MULTI_TASK_MODEL.lower()}.json"
+        )
+    )
+    folds = list(
+        LeaveOneGroupOut().split(
+            X_chest_full,
+            groups_full,
+            groups_full,
+        )
+    )
 
-    for fold, (train_idx, test_idx) in enumerate(tqdm(list(folds), desc=f"LOSO CV - Multitask {mode}"), 1):
+    for fold, (train_idx, test_idx) in enumerate(
+        tqdm(
+            folds,
+            desc=f"LOSO CV - Multitask {mode}",
+        ),
+        1,
+    ):
         subject = groups_full[test_idx][0]
         fold_probs = {}
-        for name, X in datasets.items():
-            save_dir = config.CHECKPOINT_DIR / f"multitask_{mode}_{config.MULTI_TASK_MODEL.lower()}" / name
-            X_train, X_test = prepare_data(X[train_idx], config.MULTI_TASK_MODEL, save_dir, X[test_idx], f"{name}_fold_{fold}_")
-            y_train = {task: targets[task][train_idx] for task in tasks}
-            y_test = {task: targets[task][test_idx] for task in tasks}
-            train_loader = make_loader(X_train, y_train, 256, True)
-            test_loader = make_loader(X_test, y_test, 256, False)
-            model = create_model(config.MULTI_TASK_MODEL, X_train, n_classes, multitask=True)
-            criteria = {task: nn.CrossEntropyLoss(weight=class_weights(y_train[task], n_classes[task])) for task in tasks}
-            optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
-            train_multitask(model, train_loader, criteria, tasks, optimizer, f"Training {name}")
-            torch.save({
-                "model_state": model.state_dict(), "optimizer_state": optimizer.state_dict(),
-                "fold": fold, "sensor_name": name,
-            }, save_dir / f"{name}_fold_{fold}_subject_{subject}.pth")
 
-            probs = evaluate_multitask(model, test_loader, tasks)
+        for name, X in datasets.items():
+            save_dir = (
+                config.CHECKPOINT_DIR
+                / (
+                    f"multitask_{mode}_"
+                    f"{config.MULTI_TASK_MODEL.lower()}"
+                )
+                / name
+            )
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            cached_probs = (
+                _load_multitask_probability_cache(
+                    save_dir,
+                    fold,
+                    subject,
+                    tasks,
+                    expected_samples=len(test_idx),
+                )
+            )
+
+            y_test = {
+                task: targets[task][test_idx]
+                for task in tasks
+            }
+
+            if cached_probs is not None:
+                probs = cached_probs
+            else:
+                X_train, X_test = prepare_data(
+                    X[train_idx],
+                    config.MULTI_TASK_MODEL,
+                    save_dir,
+                    X[test_idx],
+                    f"{name}_fold_{fold}_",
+                )
+                y_train = {
+                    task: targets[task][train_idx]
+                    for task in tasks
+                }
+
+                train_loader = make_loader(
+                    X_train,
+                    y_train,
+                    config.BATCH_SIZE,
+                    True,
+                    workers=True,
+                )
+                test_loader = make_loader(
+                    X_test,
+                    y_test,
+                    config.BATCH_SIZE,
+                    False,
+                )
+                model = create_model(
+                    config.MULTI_TASK_MODEL,
+                    X_train,
+                    n_classes,
+                    multitask=True,
+                )
+                criteria = {
+                    task: nn.CrossEntropyLoss(
+                        weight=class_weights(
+                            y_train[task],
+                            n_classes[task],
+                        )
+                    )
+                    for task in tasks
+                }
+                optimizer = torch.optim.Adam(
+                    model.parameters(),
+                    lr=config.LEARNING_RATE,
+                )
+
+                ckpt = save_dir / (
+                    f"{name}_fold_{fold}_"
+                    f"subject_{subject}.pth"
+                )
+                start = 0
+
+                if _resume_enabled() and ckpt.exists():
+                    state = torch.load(
+                        ckpt,
+                        map_location=config.DEVICE,
+                    )
+                    model.load_state_dict(
+                        state["model_state"]
+                    )
+                    optimizer.load_state_dict(
+                        state["optimizer_state"]
+                    )
+                    start = int(state["epoch"]) + 1
+                    print(
+                        f"[RESUME] Multitask {name} "
+                        f"fold {fold} from epoch {start}."
+                    )
+
+                train_multitask(
+                    model,
+                    train_loader,
+                    criteria,
+                    tasks,
+                    optimizer,
+                    f"Training {name} Fold {fold}",
+                    start_epoch=start,
+                    checkpoint_path=ckpt,
+                    checkpoint_metadata={
+                        "fold": fold,
+                        "sensor_name": name,
+                        "active_tasks": tasks,
+                    },
+                )
+
+                state = torch.load(
+                    ckpt,
+                    map_location=config.DEVICE,
+                )
+                model.load_state_dict(
+                    state["model_state"]
+                )
+                probs = evaluate_multitask(
+                    model,
+                    test_loader,
+                    tasks,
+                )
+                _save_multitask_probability_cache(
+                    save_dir,
+                    fold,
+                    subject,
+                    probs,
+                )
+
             fold_probs[name] = probs
+
             for task in tasks:
                 valid = y_test[task] >= 0
-                metrics = compute_metrics(y_test[task][valid], np.argmax(probs[task], axis=1)[valid]) if valid.sum() else {"accuracy": 0.0, "f1_macro": 0.0}
-                metrics.update({"fold": fold, "test_subject": str(subject)})
-                results[name][task]["folds"].append(metrics)
+                if valid.sum():
+                    metrics = compute_metrics(
+                        y_test[task][valid],
+                        np.argmax(
+                            probs[task],
+                            axis=1,
+                        )[valid],
+                    )
+                else:
+                    metrics = {
+                        "accuracy": 0.0,
+                        "f1_macro": 0.0,
+                    }
+
+                metrics.update(
+                    {
+                        "fold": fold,
+                        "test_subject": str(subject),
+                    }
+                )
+                results[name][task]["folds"].append(
+                    metrics
+                )
 
         for fusion, sensors in LATE_FUSIONS.items():
             for task in tasks:
-                probs = sum(fold_probs[s][task] for s in sensors) / len(sensors)
+                probs = (
+                    sum(
+                        fold_probs[s][task]
+                        for s in sensors
+                    )
+                    / len(sensors)
+                )
                 true = targets[task][test_idx]
                 valid = true >= 0
-                metrics = compute_metrics(true[valid], np.argmax(probs, axis=1)[valid]) if valid.sum() else {"accuracy": 0.0, "f1_macro": 0.0}
-                metrics.update({"fold": fold, "test_subject": str(subject)})
-                results[fusion][task]["folds"].append(metrics)
-        with open(result_file, "w") as f:
-            json.dump(results, f, indent=4)
+
+                if valid.sum():
+                    metrics = compute_metrics(
+                        true[valid],
+                        np.argmax(
+                            probs,
+                            axis=1,
+                        )[valid],
+                    )
+                else:
+                    metrics = {
+                        "accuracy": 0.0,
+                        "f1_macro": 0.0,
+                    }
+
+                metrics.update(
+                    {
+                        "fold": fold,
+                        "test_subject": str(subject),
+                    }
+                )
+                results[fusion][task]["folds"].append(
+                    metrics
+                )
+
+        _write_json(result_file, results)
 
     for model_results in results.values():
         for task_results in model_results.values():
-            folds_data = task_results["folds"]
-            if folds_data:
-                acc = [x.get("accuracy", 0.0) for x in folds_data]
-                f1_key = "f1" if "f1" in folds_data[0] else "f1_macro"
-                f1 = [x.get(f1_key, 0.0) for x in folds_data]
-                task_results.update({
-                    "accuracy_mean": float(np.mean(acc)), "accuracy_std": float(np.std(acc)),
-                    f"{f1_key}_mean": float(np.mean(f1)), f"{f1_key}_std": float(np.std(f1)),
-                })
-    with open(result_file, "w") as f:
-        json.dump(results, f, indent=4)
+            summarize(task_results)
 
-    print("\nTraining FINAL multitask models on all 15 subjects...\n")
+    _write_json(result_file, results)
+
+    print(
+        f"\nTraining FINAL multitask models on all "
+        f"{len(np.unique(groups_full))} "
+        f"available subjects...\n"
+    )
+
     for name, X in datasets.items():
-        final_dir = config.CHECKPOINT_DIR / f"multitask_{mode}_{config.MULTI_TASK_MODEL.lower()}" / "FINAL" / name
-        X_train, _ = prepare_data(X, config.MULTI_TASK_MODEL, final_dir)
-        loader = make_loader(X_train, targets, 256, True, workers=True)
-        model = create_model(config.MULTI_TASK_MODEL, X_train, n_classes, multitask=True)
-        criteria = {task: nn.CrossEntropyLoss(weight=class_weights(targets[task], n_classes[task])) for task in tasks}
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
-        train_multitask(model, loader, criteria, tasks, optimizer, f"FINAL {name}", leave=True)
-        torch.save({"model_state": model.state_dict(), "active_tasks": tasks, "num_classes": n_classes}, final_dir / "final_model.pth")
-    print("FINAL multitask models saved.")
+        final_dir = (
+            config.CHECKPOINT_DIR
+            / (
+                f"multitask_{mode}_"
+                f"{config.MULTI_TASK_MODEL.lower()}"
+            )
+            / "FINAL"
+            / name
+        )
+        final_dir.mkdir(parents=True, exist_ok=True)
+
+        final_model_path = final_dir / "final_model.pth"
+        training_state_path = (
+            final_dir / "final_training_state.pth"
+        )
+
+        if (
+            _resume_enabled()
+            and final_model_path.exists()
+        ):
+            print(
+                f"[SKIP] Final multitask model "
+                f"already exists for {name}."
+            )
+            continue
+
+        X_train, _ = prepare_data(
+            X,
+            config.MULTI_TASK_MODEL,
+            final_dir,
+        )
+        loader = make_loader(
+            X_train,
+            targets,
+            config.BATCH_SIZE,
+            True,
+            workers=True,
+        )
+        model = create_model(
+            config.MULTI_TASK_MODEL,
+            X_train,
+            n_classes,
+            multitask=True,
+        )
+        criteria = {
+            task: nn.CrossEntropyLoss(
+                weight=class_weights(
+                    targets[task],
+                    n_classes[task],
+                )
+            )
+            for task in tasks
+        }
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config.LEARNING_RATE,
+        )
+
+        start = 0
+        if (
+            _resume_enabled()
+            and training_state_path.exists()
+        ):
+            state = torch.load(
+                training_state_path,
+                map_location=config.DEVICE,
+            )
+            model.load_state_dict(
+                state["model_state"]
+            )
+            optimizer.load_state_dict(
+                state["optimizer_state"]
+            )
+            start = int(state["epoch"]) + 1
+            print(
+                f"[RESUME] FINAL multitask {name} "
+                f"from epoch {start}."
+            )
+
+        train_multitask(
+            model,
+            loader,
+            criteria,
+            tasks,
+            optimizer,
+            f"FINAL {name}",
+            leave=True,
+            start_epoch=start,
+            checkpoint_path=training_state_path,
+            checkpoint_metadata={
+                "active_tasks": tasks,
+                "num_classes": n_classes,
+            },
+        )
+
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "active_tasks": tasks,
+                "num_classes": n_classes,
+            },
+            final_model_path,
+        )
+
+    print(
+        "FINAL multitask models saved or reused."
+    )

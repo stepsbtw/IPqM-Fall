@@ -8,7 +8,7 @@ from lightgbm import LGBMClassifier
 
 import config
 
-def get_classical_model(model_type):
+def get_classical_model(model_type, num_classes=None):
     model_type = model_type.upper()
 
     if model_type == "RF":
@@ -19,7 +19,6 @@ def get_classical_model(model_type):
             min_samples_leaf=1,
             bootstrap=True,
             random_state=42,
-            n_jobs=-1,
         )
 
     if model_type == "SVM":
@@ -41,16 +40,33 @@ def get_classical_model(model_type):
             algorithm="auto",
             leaf_size=30,
             metric="euclidean",
-            n_jobs=-1,
         )
 
     if model_type == "LGBM":
+        if num_classes is None:
+            raise ValueError(
+                "num_classes must be provided when creating LightGBM."
+            )
+
         params = dict(config.LIGHTGBM_PARAMS)
+
+        if num_classes == 2:
+            params["objective"] = "binary"
+            params.pop("num_class", None)
+        elif num_classes > 2:
+            params["objective"] = "multiclass"
+            params["num_class"] = int(num_classes)
+        else:
+            raise ValueError(
+                f"LightGBM requires at least two classes, got {num_classes}."
+            )
+
         return LGBMClassifier(**params)
 
     raise ValueError(
         f"Modelo clássico {model_type} não reconhecido."
     )
+
 
 class CNN1Conv(nn.Module):
     def __init__(self, num_features, num_classes):

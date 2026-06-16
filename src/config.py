@@ -29,10 +29,24 @@ TRANSITION_SMOOTHING_WINDOW = int(FS * 0.5)
 
 
 EXPERIMENTS_TO_RUN = [
-    "UNIFIED",
-    "CLASSICAL_BASELINE",
-    # "SINGLE",
-    # "MODALITY_ABLATION",
+    "TASK_MODEL_MATRIX",
+    # "UNIFIED",
+]
+
+TASK_MODELS_TO_RUN = [
+    #"CNN1Conv",
+    "RF",
+    "SVM",
+    "KNN",
+    "LGBM",
+]
+
+# Full IMU is the standard comparison.
+# ACCELEROMETER and GYROSCOPE form the sensor-modality ablation.
+TASK_MODALITIES_TO_RUN = [
+    "FULL_IMU",
+#    "ACCELEROMETER",
+#    "GYROSCOPE",
 ]
 
 
@@ -40,8 +54,8 @@ EXPERIMENTS_TO_RUN = [
 # Original channel order:
 # [ax, ay, az, amag, wx, wy, wz, wmag]
 MODALITY_ABLATIONS = {
-    "ACCELEROMETER": [0, 1, 2, 3],
-    "GYROSCOPE": [4, 5, 6, 7],
+#    "ACCELEROMETER": [0, 1, 2, 3],
+#    "GYROSCOPE": [4, 5, 6, 7],
     "FULL_IMU": [0, 1, 2, 3, 4, 5, 6, 7],
 }
 
@@ -64,24 +78,9 @@ SINGLE_TASK_MODELS = {
     #"y_classify_transition": "CNN1Conv",
 }
 
-CLASSICAL_MODELS_TO_RUN = ["RF", "SVM", "KNN", "LGBM"]
-
-# Modalities used by the classical baseline batch.
-# Keep only FULL_IMU for the standard classical baseline.
-# Add ACCELEROMETER and GYROSCOPE to cross the classical models with
-# the sensor-modality ablation.
-CLASSICAL_MODALITIES_TO_RUN = [
-    "FULL_IMU",
-    # "ACCELEROMETER",
-    # "GYROSCOPE",
-]
-
-# Seven fixed time-domain descriptors per selected channel:
-# mean, standard deviation, maximum, minimum, RMS, skewness, kurtosis.
 CLASSICAL_FEATURE_SET = "COMPACT_7_TIME_DOMAIN"
 
 LIGHTGBM_PARAMS = {
-    "objective": "multiclass",
     "n_estimators": 100,
     "learning_rate": 0.1,
     "num_leaves": 31,
@@ -92,16 +91,10 @@ LIGHTGBM_PARAMS = {
     "reg_alpha": 0.0,
     "reg_lambda": 0.0,
     "random_state": 42,
-    "n_jobs": -1,
     "verbosity": -1,
 }
 
-# CLASSICAL_MODALITIES_TO_RUN = [
-#     "ACCELEROMETER",
-#     "GYROSCOPE",
-#     "FULL_IMU",
-# ]
-
+# 
 MULTI_TASK_WEIGHTS = {
     "fall": 1.0,
     #"movement_detect": 1.0,
@@ -110,6 +103,11 @@ MULTI_TASK_WEIGHTS = {
     "movement": 1.0,
     #"transition": 1.0,
 }
+
+RESUME_COMPLETED = True
+
+# Set True only when you intentionally want to ignore all caches and retrain.
+FORCE_RERUN = False
 
 EPOCHS = 80
 BATCH_SIZE = 256
