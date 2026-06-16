@@ -41,6 +41,21 @@ RAW_MAPPINGS = {
         "0": ["RUNNING-KNEELING-SHOOTING", "STANDING-KNEELING-SHOOTING", "WALKING-KNEELING-SHOOTING"],
         "1": ["RUNNING-PRONE-SHOOTING", "STANDING-PRONE-SHOOTING", "WALKING-PRONE-SHOOTING"],
         "2": ["SITTING-STANDING", "SITTING-STANDING-RIFLE", "STANDING-SITTING", "STANDING-SITTING-RIFLE"],
+    },
+    "y_unified": {
+        "0": ["BACKWARD-FALL"],
+        "1": ["FRONTAL-FALL"],
+        "2": ["LATERAL-FALL-LEFT"],
+        "3": ["LATERAL-FALL-RIGHT"],
+        "4": ["STANDING", "STANDING-RIFLE"],
+        "5": ["SITTING","SITTING-RIFLE"],
+        "6": ["KNEELING-SHOOTING"],
+        "7": ["PRONE-SHOOTING", "DOWN-SUPINE", "DOWN-PRONE", "DOWN-LEFT", "DOWN-RIGHT"],
+        "8": ["WALKING", "WALKING-DOWNHILL", "WALKING-DOWNSTAIRS", "WALKING-UPHILL", "WALKING-UPSTAIRS"],
+        "9": ["ENGAGING-SWEEPING", "WALKING-SWEEPING"],
+        "10": ["RUNNING", "RUNNING-DOWNHILL", "RUNNING-DOWNHILL-RIFLE", "RUNNING-RIFLE", "RUNNING-UPHILL", "RUNNING-UPHILL-RIFLE"],
+        "11": ["JUMPING", "JUMPING-RIFLE", "JUMPING-UPSTAIRS"],
+        "12": ["CRAWLING"],
     }
 }
 
@@ -60,6 +75,7 @@ DICT_CLASSIFY_FALL = build_dict(RAW_MAPPINGS["y_classify_fall"])
 DICT_CLASSIFY_POSTURE = build_dict(RAW_MAPPINGS["y_classify_posture"])
 DICT_CLASSIFY_MOVEMENT = build_dict(RAW_MAPPINGS["y_classify_movement"])
 DICT_CLASSIFY_TRANSITION = build_dict(RAW_MAPPINGS["y_classify_transition"])
+DICT_UNIFIED = build_dict(RAW_MAPPINGS["y_unified"])
 print("Lendo metadata Parquet...")
 windows_df = pd.read_parquet(config.WINDOWS_FILE)
 
@@ -92,7 +108,7 @@ parquet_cache = {}
 X_chest_list, X_left_list, X_right_list = [], [], []
 
 y_detect_fall_list, y_detect_movement_list = [], []
-y_classify_fall_list, y_classify_posture_list, y_classify_movement_list, y_classify_transition_list = [], [], [], []
+y_classify_fall_list, y_classify_posture_list, y_classify_movement_list, y_classify_transition_list, y_unified_list = [], [], [], [], []
 y_complete_list = []
 groups_list, sync_ids_list = [], []
 
@@ -136,6 +152,8 @@ for sync_id, group in tqdm(grouped, desc="Extraindo e Rotulando Janelas"):
         y_classify_movement_list.append(DICT_CLASSIFY_MOVEMENT.get(label_str, -1))
         y_classify_transition_list.append(DICT_CLASSIFY_TRANSITION.get(label_str, -1))
         y_complete_list.append(DICT_COMPLETE[label_str])
+        y_unified_list.append(DICT_UNIFIED.get(label_str, -1))
+        
 
         groups_list.append(group.iloc[0]["subject_id"])
         sync_ids_list.append(sync_id)
@@ -157,6 +175,7 @@ np.save(config.WINDOWED_DATASET_DIR / "y_classify_posture.npy", np.array(y_class
 np.save(config.WINDOWED_DATASET_DIR / "y_classify_movement.npy", np.array(y_classify_movement_list, dtype=np.int64))
 np.save(config.WINDOWED_DATASET_DIR / "y_classify_transition.npy", np.array(y_classify_transition_list, dtype=np.int64))
 np.save(config.WINDOWED_DATASET_DIR / "y_complete.npy", np.array(y_complete_list, dtype=np.int64))
+np.save(config.WINDOWED_DATASET_DIR / "y_unified.npy", np.array(y_unified_list, dtype=np.int64))
 
 np.save(config.WINDOWED_DATASET_DIR / "groups.npy", np.array(groups_list))
 np.save(config.WINDOWED_DATASET_DIR / "sync_ids.npy", np.array(sync_ids_list))
@@ -168,6 +187,7 @@ mapa_documentacao = {
     "y_classify_posture": RAW_MAPPINGS["y_classify_posture"],
     "y_classify_movement": RAW_MAPPINGS["y_classify_movement"],
     "y_classify_transition": RAW_MAPPINGS["y_classify_transition"],
+    "y_unified": RAW_MAPPINGS["y_unified"],
     "y_complete_map": {str(v): k for k, v in DICT_COMPLETE.items()}
 }
 

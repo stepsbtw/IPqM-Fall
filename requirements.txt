@@ -8,3 +8,4 @@ scikit-learn
 # streamlit-shortcuts
 torch # if needed, install accordingly to your cuda version
 tqdm
+lightgbm
