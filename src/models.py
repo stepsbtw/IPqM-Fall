@@ -4,12 +4,18 @@ import torch
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
 from lightgbm import LGBMClassifier
 
 import config
 
 def get_classical_model(model_type, num_classes=None):
     model_type = model_type.upper()
+
+    if model_type == "LOGREG":
+        return LogisticRegression(
+            **config.LOGREG_PARAMS
+        )
 
     if model_type == "RF":
         return RandomForestClassifier(
@@ -173,12 +179,27 @@ class LSTMModel(nn.Module):
         _, (hidden, _) = self.lstm(x)
         return self.classifier(hidden[-1])
 
-# class MLP(nn.Module):
-#    def __init__(self, input_size, num_classes):
-#        super().__init__()
-#        self.network = nn.Sequential(nn.Linear(input_size, 100), nn.ReLU(), nn.Linear(100, num_classes))
-#    def forward(self, x):
-#        return self.network(x)
+class MLP(nn.Module):
+    """
+    Raw-window ANN baseline based on Georgakopoulos et al.
+
+    Architecture reported in the paper:
+      flattened raw window -> 100 hidden neurons -> output layer
+
+    The paper reports 50 epochs and full-batch training. Those settings
+    are enforced by utils.py.
+    """
+
+    def __init__(self, input_size, num_classes):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_size, config.MLP_HIDDEN_UNITS),
+            nn.ReLU(),
+            nn.Linear(config.MLP_HIDDEN_UNITS, num_classes),
+        )
+
+    def forward(self, x):
+        return self.network(x)
 
 class CNN1Conv_MultiTask(nn.Module):
     def __init__(self, num_features, num_classes_dict):

@@ -18,7 +18,54 @@ import models
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-CLASSICAL_MODELS = {"RF", "SVM", "KNN", "LGBM"}
+
+def _experiment_signature():
+    if hasattr(config, "experiment_signature"):
+        return config.experiment_signature()
+
+    return {
+        "fs": int(config.FS),
+        "window_sec": float(config.WINDOW_SEC),
+        "stride_sec": float(config.STRIDE_SEC),
+        "window_samples": int(config.WINDOW_SAMPLES),
+        "stride_samples": int(config.STRIDE_SAMPLES),
+        "window_tag": str(config.WINDOW_TAG),
+        "epochs": int(config.EPOCHS),
+        "batch_size": int(config.BATCH_SIZE),
+        "learning_rate": float(config.LEARNING_RATE),
+        "dropout": float(config.DROPOUT),
+        "classical_feature_set": str(
+            config.CLASSICAL_FEATURE_SET
+        ),
+    }
+
+
+def _signatures_match(saved, current=None):
+    if current is None:
+        current = _experiment_signature()
+    return saved == current
+
+
+def _checkpoint_compatible(state):
+    saved = state.get("experiment_signature")
+    if saved is None:
+        return False
+    return _signatures_match(saved)
+
+
+def _metadata_file_compatible(path):
+    if not path.exists():
+        return False
+    try:
+        metadata = _read_json(path)
+    except Exception:
+        return False
+    return _signatures_match(
+        metadata.get("experiment_signature")
+    )
+
+
+CLASSICAL_MODELS = {"LOGREG", "RF", "SVM", "KNN", "LGBM"}
 CONV_MODELS = {"CNN1Conv", "CNN3B3Conv", "DeepConvLSTM"}
 DL_MODELS = CONV_MODELS | {"LSTM", "MLP"}
 LATE_FUSIONS = {
@@ -40,6 +87,25 @@ TARGET_FILES = {
     "posture": "y_classify_posture.npy",
     "movement": "y_classify_movement.npy",
 }
+
+
+def epochs_for(model_type):
+    if model_type == "MLP":
+        return int(config.MLP_EPOCHS)
+    return int(config.EPOCHS)
+
+
+def batch_size_for(model_type, n_samples):
+    if model_type == "MLP" and config.MLP_FULL_BATCH:
+        return int(n_samples)
+    return int(config.BATCH_SIZE)
+
+
+def optimizer_for(model_type, model):
+    return torch.optim.Adam(
+        model.parameters(),
+        lr=config.LEARNING_RATE,
+    )
 
 
 def extract_handcrafted_features(X):
@@ -109,23 +175,136 @@ def compute_metrics(y_true, y_pred):
             "tn": int(tn),
         })
     else:
+        labels = sorted(
+            int(value)
+            for value in classes.tolist()
+        )
+        matrix = confusion_matrix(
+            y_true,
+            y_pred,
+            labels=labels,
+        )
+
+        total = int(matrix.sum())
+        per_class_counts = {}
+
+        for index, class_id in enumerate(labels):
+            tp = int(matrix[index, index])
+            fn = int(matrix[index, :].sum() - tp)
+            fp = int(matrix[:, index].sum() - tp)
+            tn = int(total - tp - fn - fp)
+
+            per_class_counts[str(class_id)] = {
+                "tp": tp,
+                "fp": fp,
+                "tn": tn,
+                "fn": fn,
+            }
+
         result.update({
-            "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
-            "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
-            "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+            "precision_macro": float(
+                precision_score(
+                    y_true,
+                    y_pred,
+                    labels=labels,
+                    average="macro",
+                    zero_division=0,
+                )
+            ),
+            "recall_macro": float(
+                recall_score(
+                    y_true,
+                    y_pred,
+                    labels=labels,
+                    average="macro",
+                    zero_division=0,
+                )
+            ),
+            "f1_macro": float(
+                f1_score(
+                    y_true,
+                    y_pred,
+                    labels=labels,
+                    average="macro",
+                    zero_division=0,
+                )
+            ),
+            "confusion_labels": labels,
+            "confusion_matrix": (
+                matrix.astype(int).tolist()
+            ),
+            "per_class_counts": per_class_counts,
         })
     return result
 
 
-def compute_fixed_multiclass_metrics(y_true, y_pred, labels):
+def compute_fixed_multiclass_metrics(
+    y_true,
+    y_pred,
+    labels,
+):
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
-    labels = list(labels)
+    labels = [int(label) for label in labels]
+
+    matrix = confusion_matrix(
+        y_true,
+        y_pred,
+        labels=labels,
+    )
+
+    total = int(matrix.sum())
+    per_class_counts = {}
+
+    for index, class_id in enumerate(labels):
+        tp = int(matrix[index, index])
+        fn = int(matrix[index, :].sum() - tp)
+        fp = int(matrix[:, index].sum() - tp)
+        tn = int(total - tp - fn - fp)
+
+        per_class_counts[str(class_id)] = {
+            "tp": tp,
+            "fp": fp,
+            "tn": tn,
+            "fn": fn,
+        }
+
     return {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision_macro": float(precision_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
-        "recall_macro": float(recall_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
-        "f1_macro": float(f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
+        "accuracy": float(
+            accuracy_score(y_true, y_pred)
+        ),
+        "precision_macro": float(
+            precision_score(
+                y_true,
+                y_pred,
+                labels=labels,
+                average="macro",
+                zero_division=0,
+            )
+        ),
+        "recall_macro": float(
+            recall_score(
+                y_true,
+                y_pred,
+                labels=labels,
+                average="macro",
+                zero_division=0,
+            )
+        ),
+        "f1_macro": float(
+            f1_score(
+                y_true,
+                y_pred,
+                labels=labels,
+                average="macro",
+                zero_division=0,
+            )
+        ),
+        "confusion_labels": labels,
+        "confusion_matrix": (
+            matrix.astype(int).tolist()
+        ),
+        "per_class_counts": per_class_counts,
     }
 
 
@@ -300,6 +479,9 @@ def train_multitask(
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
                 "epoch": epoch,
+                "experiment_signature": (
+                    _experiment_signature()
+                ),
             }
             if checkpoint_metadata:
                 state.update(checkpoint_metadata)
@@ -330,12 +512,43 @@ def make_loader(X, targets, batch_size, shuffle, workers=False):
 
 
 def summarize(entry):
-    if not entry["folds"]:
+    folds = entry.get("folds", [])
+    if not folds:
         return
-    for metric in (k for k in entry["folds"][0] if k not in {"fold", "test_subject"}):
-        values = [fold[metric] for fold in entry["folds"]]
-        entry[f"{metric}_mean"] = float(np.mean(values))
-        entry[f"{metric}_std"] = float(np.std(values))
+
+    ignored = {
+        "fold",
+        "test_subject",
+        "confusion_labels",
+        "confusion_matrix",
+        "per_class_counts",
+    }
+
+    candidate_metrics = set()
+    for fold in folds:
+        candidate_metrics.update(fold.keys())
+
+    for metric in sorted(candidate_metrics - ignored):
+        values = [
+            fold[metric]
+            for fold in folds
+            if metric in fold
+        ]
+
+        if not values:
+            continue
+
+        # Only aggregate true scalar numeric values.
+        if not all(
+            isinstance(value, (int, float, np.integer, np.floating))
+            and not isinstance(value, (bool, np.bool_))
+            for value in values
+        ):
+            continue
+
+        numeric = np.asarray(values, dtype=np.float64)
+        entry[f"{metric}_mean"] = float(np.mean(numeric))
+        entry[f"{metric}_std"] = float(np.std(numeric))
 
 
 
@@ -364,6 +577,7 @@ def _fold_cache_paths(save_dir, fold, subject):
         "probabilities": save_dir / f"{stem}_probabilities.npy",
         "model": save_dir / f"{stem}_model.pkl",
         "scaler": save_dir / f"{stem}_scaler.pkl",
+        "metadata": save_dir / f"{stem}_metadata.json",
     }
 
 
@@ -375,7 +589,17 @@ def _load_fold_cache(save_dir, fold, subject, expected_samples):
     if not (
         paths["metrics"].exists()
         and paths["probabilities"].exists()
+        and paths["metadata"].exists()
     ):
+        return None
+
+    if not _metadata_file_compatible(
+        paths["metadata"]
+    ):
+        print(
+            f"[CACHE INVALID] {save_dir.name} fold {fold}: "
+            "experiment signature changed."
+        )
         return None
 
     metrics = _read_json(paths["metrics"])
@@ -406,6 +630,17 @@ def _save_fold_cache(
     paths = _fold_cache_paths(save_dir, fold, subject)
     _write_json(paths["metrics"], metrics)
     np.save(paths["probabilities"], probabilities)
+    _write_json(
+        paths["metadata"],
+        {
+            "experiment_signature": (
+                _experiment_signature()
+            ),
+            "fold": int(fold),
+            "test_subject": str(subject),
+            "samples": int(len(probabilities)),
+        },
+    )
 
 
 def _multitask_probability_cache(save_dir, fold, subject):
@@ -665,14 +900,20 @@ def train_single_task(
                 train_loader = make_loader(
                     X_train,
                     y[train_idx],
-                    config.BATCH_SIZE,
+                    batch_size_for(
+                        model_type,
+                        len(X_train),
+                    ),
                     True,
                     workers=True,
                 )
                 test_loader = make_loader(
                     X_test,
                     y[test_idx],
-                    config.BATCH_SIZE,
+                    batch_size_for(
+                        model_type,
+                        len(X_test),
+                    ),
                     False,
                 )
                 criterion = nn.CrossEntropyLoss(
@@ -681,9 +922,9 @@ def train_single_task(
                         n_classes,
                     )
                 )
-                optimizer = torch.optim.Adam(
-                    model.parameters(),
-                    lr=config.LEARNING_RATE,
+                optimizer = optimizer_for(
+                    model_type,
+                    model,
                 )
 
                 start = 0
@@ -692,25 +933,34 @@ def train_single_task(
                         ckpt,
                         map_location=config.DEVICE,
                     )
+                    if not _checkpoint_compatible(state):
+                        print(
+                            f"[CHECKPOINT INVALID] {ckpt}: "
+                            "experiment signature changed; "
+                            "training from epoch 0."
+                        )
+                        state = None
+
                     base = (
                         model.module
                         if isinstance(model, nn.DataParallel)
                         else model
                     )
-                    base.load_state_dict(
-                        state["model_state"]
-                    )
-                    optimizer.load_state_dict(
-                        state["optimizer_state"]
-                    )
-                    start = int(state["epoch"]) + 1
-                    print(
-                        f"[RESUME] {name} fold {fold} "
-                        f"from epoch {start}."
-                    )
+                    if state is not None:
+                        base.load_state_dict(
+                            state["model_state"]
+                        )
+                        optimizer.load_state_dict(
+                            state["optimizer_state"]
+                        )
+                        start = int(state["epoch"]) + 1
+                        print(
+                            f"[RESUME] {name} fold {fold} "
+                            f"from epoch {start}."
+                        )
 
                 progress = tqdm(
-                    range(start, config.EPOCHS),
+                    range(start, epochs_for(model_type)),
                     desc=f"{name} Fold {fold}",
                     leave=False,
                 )
@@ -734,6 +984,9 @@ def train_single_task(
                         {
                             "model_state": (
                                 base.state_dict()
+                            ),
+                            "experiment_signature": (
+                                _experiment_signature()
                             ),
                             "optimizer_state": (
                                 optimizer.state_dict()
@@ -837,6 +1090,9 @@ def train_single_task(
                 and model_path.exists()
                 and scaler_path.exists()
                 and metadata_path.exists()
+                and _metadata_file_compatible(
+                    metadata_path
+                )
             ):
                 print(
                     f"[SKIP] Final {model_type} model "
@@ -860,6 +1116,9 @@ def train_single_task(
                 {
                     "task_name": task_name,
                     "model_type": model_type,
+                    "experiment_signature": (
+                        _experiment_signature()
+                    ),
                     "modality": experiment_tag,
                     "feature_set": (
                         config.CLASSICAL_FEATURE_SET
@@ -872,6 +1131,11 @@ def train_single_task(
                         extract_handcrafted_features(
                             X[:1]
                         ).shape[1]
+                    ),
+                    "reference": (
+                        "MobiAct WEKA-default Logistic"
+                        if model_type == "LOGREG"
+                        else None
                     ),
                 },
             )
@@ -886,11 +1150,20 @@ def train_single_task(
             _resume_enabled()
             and final_model_path.exists()
         ):
-            print(
-                f"[SKIP] Final neural model already "
-                f"exists for {name}."
+            final_state = torch.load(
+                final_model_path,
+                map_location="cpu",
             )
-            continue
+            if _checkpoint_compatible(final_state):
+                print(
+                    f"[SKIP] Final neural model already "
+                    f"exists for {name}."
+                )
+                continue
+            print(
+                f"[FINAL MODEL INVALID] {final_model_path}: "
+                "experiment signature changed; retraining."
+            )
 
         X_train, _ = prepare_data(
             X,
@@ -906,7 +1179,10 @@ def train_single_task(
         loader = make_loader(
             X_train,
             y,
-            config.BATCH_SIZE,
+            batch_size_for(
+                model_type,
+                len(X_train),
+            ),
             True,
             workers=True,
         )
@@ -916,9 +1192,9 @@ def train_single_task(
                 n_classes,
             )
         )
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=config.LEARNING_RATE,
+        optimizer = optimizer_for(
+            config.MULTI_TASK_MODEL,
+            model,
         )
 
         start = 0
@@ -930,20 +1206,27 @@ def train_single_task(
                 training_state_path,
                 map_location=config.DEVICE,
             )
-            model.load_state_dict(
-                state["model_state"]
-            )
-            optimizer.load_state_dict(
-                state["optimizer_state"]
-            )
-            start = int(state["epoch"]) + 1
-            print(
-                f"[RESUME] FINAL {name} "
-                f"from epoch {start}."
-            )
+            if _checkpoint_compatible(state):
+                model.load_state_dict(
+                    state["model_state"]
+                )
+                optimizer.load_state_dict(
+                    state["optimizer_state"]
+                )
+                start = int(state["epoch"]) + 1
+                print(
+                    f"[RESUME] FINAL {name} "
+                    f"from epoch {start}."
+                )
+            else:
+                print(
+                    f"[TRAINING STATE INVALID] "
+                    f"{training_state_path}; "
+                    "training from epoch 0."
+                )
 
         for epoch in tqdm(
-            range(start, config.EPOCHS),
+            range(start, epochs_for(model_type)),
             desc=f"FINAL {name}",
         ):
             single_epoch(
@@ -955,6 +1238,9 @@ def train_single_task(
             torch.save(
                 {
                     "model_state": model.state_dict(),
+                    "experiment_signature": (
+                        _experiment_signature()
+                    ),
                     "optimizer_state": (
                         optimizer.state_dict()
                     ),
@@ -966,11 +1252,24 @@ def train_single_task(
         torch.save(
             {
                 "model_state": model.state_dict(),
+                "experiment_signature": (
+                    _experiment_signature()
+                ),
                 "model_type": model_type,
                 "num_classes": n_classes,
                 "experiment_tag": experiment_tag,
                 "input_channels_per_sensor": int(
                     X_chest_full.shape[2]
+                ),
+                "epochs": epochs_for(model_type),
+                "batch_size": batch_size_for(
+                    model_type,
+                    len(X_train),
+                ),
+                "reference": (
+                    config.MLP_SOURCE
+                    if model_type == "MLP"
+                    else None
                 ),
             },
             final_model_path,
@@ -1161,14 +1460,20 @@ def train_unified_model(
                 train_loader = make_loader(
                     X_train,
                     y[train_idx],
-                    config.BATCH_SIZE,
+                    batch_size_for(
+                        model_type,
+                        len(X_train),
+                    ),
                     True,
                     workers=True,
                 )
                 test_loader = make_loader(
                     X_test,
                     y[test_idx],
-                    config.BATCH_SIZE,
+                    batch_size_for(
+                        model_type,
+                        len(X_test),
+                    ),
                     False,
                 )
                 criterion = nn.CrossEntropyLoss(
@@ -1177,9 +1482,9 @@ def train_unified_model(
                         config.UNIFIED_NUM_CLASSES,
                     )
                 )
-                optimizer = torch.optim.Adam(
-                    model.parameters(),
-                    lr=config.LEARNING_RATE,
+                optimizer = optimizer_for(
+                    model_type,
+                    model,
                 )
 
                 start = 0
@@ -1188,25 +1493,34 @@ def train_unified_model(
                         ckpt,
                         map_location=config.DEVICE,
                     )
+                    if not _checkpoint_compatible(state):
+                        print(
+                            f"[CHECKPOINT INVALID] {ckpt}: "
+                            "experiment signature changed; "
+                            "training from epoch 0."
+                        )
+                        state = None
+
                     base = (
                         model.module
                         if isinstance(model, nn.DataParallel)
                         else model
                     )
-                    base.load_state_dict(
-                        state["model_state"]
-                    )
-                    optimizer.load_state_dict(
-                        state["optimizer_state"]
-                    )
-                    start = int(state["epoch"]) + 1
-                    print(
-                        f"[RESUME] {name} fold {fold} "
-                        f"from epoch {start}."
-                    )
+                    if state is not None:
+                        base.load_state_dict(
+                            state["model_state"]
+                        )
+                        optimizer.load_state_dict(
+                            state["optimizer_state"]
+                        )
+                        start = int(state["epoch"]) + 1
+                        print(
+                            f"[RESUME] {name} fold {fold} "
+                            f"from epoch {start}."
+                        )
 
                 progress = tqdm(
-                    range(start, config.EPOCHS),
+                    range(start, epochs_for(model_type)),
                     desc=f"{name} Fold {fold}",
                     leave=False,
                 )
@@ -1230,6 +1544,9 @@ def train_unified_model(
                         {
                             "model_state": (
                                 base.state_dict()
+                            ),
+                            "experiment_signature": (
+                                _experiment_signature()
                             ),
                             "optimizer_state": (
                                 optimizer.state_dict()
@@ -1380,6 +1697,9 @@ def train_unified_model(
                 and model_path.exists()
                 and scaler_path.exists()
                 and metadata_path.exists()
+                and _metadata_file_compatible(
+                    metadata_path
+                )
             ):
                 print(
                     f"[SKIP] Final unified {model_type} "
@@ -1403,6 +1723,12 @@ def train_unified_model(
                 {
                     "target": "y_unified",
                     "model_type": model_type,
+                    "experiment_signature": (
+                        _experiment_signature()
+                    ),
+                    "experiment_signature": (
+                        _experiment_signature()
+                    ),
                     "modality": experiment_tag,
                     "num_classes": config.UNIFIED_NUM_CLASSES,
                     "feature_set": config.CLASSICAL_FEATURE_SET,
@@ -1414,6 +1740,11 @@ def train_unified_model(
                         extract_handcrafted_features(
                             X[:1]
                         ).shape[1]
+                    ),
+                    "reference": (
+                        "MobiAct WEKA-default Logistic"
+                        if model_type == "LOGREG"
+                        else None
                     ),
                 },
             )
@@ -1428,11 +1759,20 @@ def train_unified_model(
             _resume_enabled()
             and final_model_path.exists()
         ):
-            print(
-                f"[SKIP] Final unified neural model "
-                f"already exists for {name}."
+            final_state = torch.load(
+                final_model_path,
+                map_location="cpu",
             )
-            continue
+            if _checkpoint_compatible(final_state):
+                print(
+                    f"[SKIP] Final unified neural model "
+                    f"already exists for {name}."
+                )
+                continue
+            print(
+                f"[FINAL MODEL INVALID] {final_model_path}: "
+                "experiment signature changed; retraining."
+            )
 
         X_train, _ = prepare_data(
             X,
@@ -1447,7 +1787,10 @@ def train_unified_model(
         loader = make_loader(
             X_train,
             y,
-            config.BATCH_SIZE,
+            batch_size_for(
+                model_type,
+                len(X_train),
+            ),
             True,
             workers=True,
         )
@@ -1457,9 +1800,9 @@ def train_unified_model(
                 config.UNIFIED_NUM_CLASSES,
             )
         )
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=config.LEARNING_RATE,
+        optimizer = optimizer_for(
+            model_type,
+            model,
         )
 
         start = 0
@@ -1471,20 +1814,27 @@ def train_unified_model(
                 training_state_path,
                 map_location=config.DEVICE,
             )
-            model.load_state_dict(
-                state["model_state"]
-            )
-            optimizer.load_state_dict(
-                state["optimizer_state"]
-            )
-            start = int(state["epoch"]) + 1
-            print(
-                f"[RESUME] FINAL UNIFIED {name} "
-                f"from epoch {start}."
-            )
+            if _checkpoint_compatible(state):
+                model.load_state_dict(
+                    state["model_state"]
+                )
+                optimizer.load_state_dict(
+                    state["optimizer_state"]
+                )
+                start = int(state["epoch"]) + 1
+                print(
+                    f"[RESUME] FINAL UNIFIED {name} "
+                    f"from epoch {start}."
+                )
+            else:
+                print(
+                    f"[TRAINING STATE INVALID] "
+                    f"{training_state_path}; "
+                    "training from epoch 0."
+                )
 
         for epoch in tqdm(
-            range(start, config.EPOCHS),
+            range(start, epochs_for(model_type)),
             desc=f"FINAL UNIFIED {name}",
         ):
             single_epoch(
@@ -1496,6 +1846,9 @@ def train_unified_model(
             torch.save(
                 {
                     "model_state": model.state_dict(),
+                    "experiment_signature": (
+                        _experiment_signature()
+                    ),
                     "optimizer_state": (
                         optimizer.state_dict()
                     ),
@@ -1507,6 +1860,9 @@ def train_unified_model(
         torch.save(
             {
                 "model_state": model.state_dict(),
+                "experiment_signature": (
+                    _experiment_signature()
+                ),
                 "model_type": model_type,
                 "num_classes": (
                     config.UNIFIED_NUM_CLASSES
@@ -1661,9 +2017,9 @@ def run_multitask(
                     )
                     for task in tasks
                 }
-                optimizer = torch.optim.Adam(
-                    model.parameters(),
-                    lr=config.LEARNING_RATE,
+                optimizer = optimizer_for(
+                    config.MULTI_TASK_MODEL,
+                    model,
                 )
 
                 ckpt = save_dir / (
@@ -1677,17 +2033,24 @@ def run_multitask(
                         ckpt,
                         map_location=config.DEVICE,
                     )
-                    model.load_state_dict(
-                        state["model_state"]
-                    )
-                    optimizer.load_state_dict(
-                        state["optimizer_state"]
-                    )
-                    start = int(state["epoch"]) + 1
-                    print(
-                        f"[RESUME] Multitask {name} "
-                        f"fold {fold} from epoch {start}."
-                    )
+                    if _checkpoint_compatible(state):
+                        model.load_state_dict(
+                            state["model_state"]
+                        )
+                        optimizer.load_state_dict(
+                            state["optimizer_state"]
+                        )
+                        start = int(state["epoch"]) + 1
+                        print(
+                            f"[RESUME] Multitask {name} "
+                            f"fold {fold} from epoch {start}."
+                        )
+                    else:
+                        print(
+                            f"[CHECKPOINT INVALID] {ckpt}: "
+                            "experiment signature changed; "
+                            "training from epoch 0."
+                        )
 
                 train_multitask(
                     model,
@@ -1823,11 +2186,20 @@ def run_multitask(
             _resume_enabled()
             and final_model_path.exists()
         ):
-            print(
-                f"[SKIP] Final multitask model "
-                f"already exists for {name}."
+            final_state = torch.load(
+                final_model_path,
+                map_location="cpu",
             )
-            continue
+            if _checkpoint_compatible(final_state):
+                print(
+                    f"[SKIP] Final multitask model "
+                    f"already exists for {name}."
+                )
+                continue
+            print(
+                f"[FINAL MODEL INVALID] {final_model_path}: "
+                "experiment signature changed; retraining."
+            )
 
         X_train, _ = prepare_data(
             X,
@@ -1856,9 +2228,9 @@ def run_multitask(
             )
             for task in tasks
         }
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=config.LEARNING_RATE,
+        optimizer = optimizer_for(
+            model_type,
+            model,
         )
 
         start = 0
@@ -1870,17 +2242,24 @@ def run_multitask(
                 training_state_path,
                 map_location=config.DEVICE,
             )
-            model.load_state_dict(
-                state["model_state"]
-            )
-            optimizer.load_state_dict(
-                state["optimizer_state"]
-            )
-            start = int(state["epoch"]) + 1
-            print(
-                f"[RESUME] FINAL multitask {name} "
-                f"from epoch {start}."
-            )
+            if _checkpoint_compatible(state):
+                model.load_state_dict(
+                    state["model_state"]
+                )
+                optimizer.load_state_dict(
+                    state["optimizer_state"]
+                )
+                start = int(state["epoch"]) + 1
+                print(
+                    f"[RESUME] FINAL multitask {name} "
+                    f"from epoch {start}."
+                )
+            else:
+                print(
+                    f"[TRAINING STATE INVALID] "
+                    f"{training_state_path}; "
+                    "training from epoch 0."
+                )
 
         train_multitask(
             model,
@@ -1901,6 +2280,9 @@ def run_multitask(
         torch.save(
             {
                 "model_state": model.state_dict(),
+                "experiment_signature": (
+                    _experiment_signature()
+                ),
                 "active_tasks": tasks,
                 "num_classes": n_classes,
             },

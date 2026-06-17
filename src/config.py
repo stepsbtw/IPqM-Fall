@@ -29,15 +29,17 @@ TRANSITION_SMOOTHING_WINDOW = int(FS * 0.5)
 
 
 EXPERIMENTS_TO_RUN = [
-#    "TASK_MODEL_MATRIX",
+    "TASK_MODEL_MATRIX",
     "UNIFIED_MODEL_MATRIX",
 ]
 
 TASK_MODELS_TO_RUN = [
-    "CNN1Conv",
-    "RF",
-    "SVM",
-    "KNN",
+    #"CNN1Conv",
+    #"MLP",
+    "LOGREG",
+    #"RF",
+    #"SVM",
+    #"KNN",
 #    "LGBM",
 ]
 
@@ -57,9 +59,11 @@ MULTI_TASK_MODEL = "CNN1Conv"
 
 UNIFIED_MODELS_TO_RUN = [
 #    "CNN1Conv",
-    "RF",
-    "SVM",
-    "KNN",
+    #"MLP",
+    "LOGREG",
+   # "RF",
+   # "SVM",
+   # "KNN",
 #    "LGBM",
 ]
 
@@ -98,6 +102,24 @@ LIGHTGBM_PARAMS = {
     "verbosity": -1,
 }
 
+LOGREG_PARAMS = {
+    "penalty": "l2",
+    "C": 1.0e8,
+    "solver": "lbfgs",
+    "max_iter": 5000,
+    "tol": 1.0e-4,
+    "class_weight": None,
+    "random_state": 42,
+}
+
+MLP_HIDDEN_UNITS = 100
+MLP_EPOCHS = 50
+MLP_FULL_BATCH = True
+MLP_SOURCE = (
+    "Georgakopoulos et al., Change detection and "
+    "convolution neural networks for fall recognition"
+)
+
 MULTI_TASK_WEIGHTS = {
     "fall": 1.0,
     #"movement_detect": 1.0,
@@ -126,7 +148,8 @@ MODEL_OUTPUT_DIRS = {
     "CNN3B3Conv": "cnn",
     "DeepConvLSTM": "cnn",
     "LSTM": "cnn",
-    "MLP": "cnn",
+    "MLP": "mlp",
+    "LOGREG": "logreg",
     "RF": "rf",
     "SVM": "svm",
     "KNN": "knn",
@@ -143,6 +166,7 @@ def model_results_dir(model_type):
         "DEEPCONVLSTM": "DeepConvLSTM",
         "LSTM": "LSTM",
         "MLP": "MLP",
+        "LOGREG": "LOGREG",
         "RF": "RF",
         "SVM": "SVM",
         "KNN": "KNN",
@@ -168,6 +192,24 @@ elif hasattr(torch, "xpu") and torch.xpu.is_available():
 else:
     DEVICE = torch.device("cpu")
 
+
+def experiment_signature():
+    """Return the settings that define checkpoint/cache compatibility."""
+    return {
+        "fs": int(FS),
+        "window_sec": float(WINDOW_SEC),
+        "stride_sec": float(STRIDE_SEC),
+        "window_samples": int(WINDOW_SAMPLES),
+        "stride_samples": int(STRIDE_SAMPLES),
+        "window_tag": str(WINDOW_TAG),
+        "epochs": int(EPOCHS),
+        "batch_size": int(BATCH_SIZE),
+        "learning_rate": float(LEARNING_RATE),
+        "dropout": float(DROPOUT),
+        "classical_feature_set": str(CLASSICAL_FEATURE_SET),
+    }
+
+
 def print_experiment_summary():
     print("=" * 72)
     print("IPqM-Fall experiment matrix")
@@ -176,6 +218,10 @@ def print_experiment_summary():
     print(f"Stride: {STRIDE_SEC} s")
     print(f"Sampling frequency: {FS} Hz")
     print(f"Device: {DEVICE}")
+
+    print(f"Windowed dataset directory: {WINDOWED_DATASET_DIR}")
+    print(f"Checkpoint directory: {CHECKPOINT_DIR}")
+    print(f"Results directory: {RESULTS_DIR}")
     print(f"Experiments: {EXPERIMENTS_TO_RUN}")
 
     if "TASK_MODEL_MATRIX" in EXPERIMENTS_TO_RUN:
