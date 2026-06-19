@@ -1,0 +1,5 @@
+window_seconds,stride_seconds,condition,total_windows,y_classify_fall_valid,y_classify_movement_valid,y_classify_posture_valid,y_classify_transition_valid,y_complete_valid,y_detect_fall_valid,y_detect_movement_valid,y_unified_valid
+2.0,1.0,Armed,18604,670,9858,7653,423,18604,18604,18604,18181
+2.0,1.0,Unarmed,15808,938,9883,4881,106,15808,15808,15808,15702
+5.0,1.0,Armed,16621,714,9211,6353,343,16621,16621,16621,16278
+5.0,1.0,Unarmed,13273,1001,8539,3694,39,13273,13273,13273,13234

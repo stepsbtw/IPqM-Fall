@@ -60,8 +60,13 @@ def _metadata_file_compatible(path):
         metadata = _read_json(path)
     except Exception:
         return False
-    return _signatures_match(
+    if not _signatures_match(
         metadata.get("experiment_signature")
+    ):
+        return False
+    return (
+        metadata.get("metric_convention_version")
+        == METRIC_CONVENTION_VERSION
     )
 
 
@@ -87,6 +92,39 @@ TARGET_FILES = {
     "posture": "y_classify_posture.npy",
     "movement": "y_classify_movement.npy",
 }
+
+# Versioned separately from model checkpoints so metric-cache files created
+# with the old binary convention are invalidated without forcing retraining.
+METRIC_CONVENTION_VERSION = "binary-positive-label-v2"
+
+# Task-specific positive classes for binary tasks.  In the fall-detection
+# target, Fall is encoded as 0 and Non-Fall as 1.  This is the opposite of
+# sklearn's default positive label and must therefore be explicit.
+BINARY_POSITIVE_LABELS = {
+    "y_detect_fall": 0,
+    "fall_detection": 0,
+    "fall": 0,
+    "y_detect_movement": 1,
+    "movement_detection": 1,
+    "movement_detect": 1,
+}
+
+BINARY_POSITIVE_CLASS_NAMES = {
+    "y_detect_fall": "Fall",
+    "fall_detection": "Fall",
+    "fall": "Fall",
+    "y_detect_movement": "Movement",
+    "movement_detection": "Movement",
+    "movement_detect": "Movement",
+}
+
+
+def metric_context_for_task(task_name):
+    key = str(task_name).lower()
+    return (
+        BINARY_POSITIVE_LABELS.get(key),
+        BINARY_POSITIVE_CLASS_NAMES.get(key),
+    )
 
 
 def epochs_for(model_type):
@@ -132,48 +170,132 @@ def extract_handcrafted_features(X):
     )
 
 
-def compute_metrics(y_true, y_pred):
+def compute_metrics(
+    y_true,
+    y_pred,
+    positive_label=None,
+    positive_class_name=None,
+):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
     classes = np.unique(np.concatenate((y_true, y_pred)))
     binary = len(classes) <= 2 and set(classes).issubset({0, 1})
     result = {"accuracy": float(accuracy_score(y_true, y_pred))}
+
     if binary:
-        # In y_detect_fall: 0 = Fall and 1 = Non-Fall.
-        matrix = confusion_matrix(y_true, y_pred, labels=[0, 1])
-        tp = matrix[0, 0]
-        fn = matrix[0, 1]
-        fp = matrix[1, 0]
-        tn = matrix[1, 1]
+        labels = [0, 1]
+        if positive_label is None:
+            # Default only for generic binary tasks.  Fall Detection must pass
+            # positive_label=0 through metric_context_for_task().
+            positive_label = 1
+        positive_label = int(positive_label)
+        if positive_label not in labels:
+            raise ValueError(
+                f"positive_label must be 0 or 1 for binary metrics, got {positive_label}."
+            )
+
+        negative_label = 1 - positive_label
+        matrix = confusion_matrix(y_true, y_pred, labels=labels)
+        pos_idx = labels.index(positive_label)
+        neg_idx = labels.index(negative_label)
+
+        tp = int(matrix[pos_idx, pos_idx])
+        fn = int(matrix[pos_idx, neg_idx])
+        fp = int(matrix[neg_idx, pos_idx])
+        tn = int(matrix[neg_idx, neg_idx])
+
+        class_0_precision = float(
+            precision_score(
+                y_true,
+                y_pred,
+                pos_label=0,
+                zero_division=0,
+            )
+        )
+        class_0_recall = float(
+            recall_score(
+                y_true,
+                y_pred,
+                pos_label=0,
+                zero_division=0,
+            )
+        )
+        class_0_f1 = float(
+            f1_score(
+                y_true,
+                y_pred,
+                pos_label=0,
+                zero_division=0,
+            )
+        )
+        class_1_precision = float(
+            precision_score(
+                y_true,
+                y_pred,
+                pos_label=1,
+                zero_division=0,
+            )
+        )
+        class_1_recall = float(
+            recall_score(
+                y_true,
+                y_pred,
+                pos_label=1,
+                zero_division=0,
+            )
+        )
+        class_1_f1 = float(
+            f1_score(
+                y_true,
+                y_pred,
+                pos_label=1,
+                zero_division=0,
+            )
+        )
 
         result.update({
-            "precision": float(
-                precision_score(
-                    y_true,
-                    y_pred,
-                    pos_label=0,
-                    zero_division=0,
-                )
-            ),
-            "recall": float(
-                recall_score(
-                    y_true,
-                    y_pred,
-                    pos_label=0,
-                    zero_division=0,
-                )
-            ),
-            "f1": float(
+            "precision": class_0_precision if positive_label == 0 else class_1_precision,
+            "recall": class_0_recall if positive_label == 0 else class_1_recall,
+            "f1": class_0_f1 if positive_label == 0 else class_1_f1,
+            "f1_macro": float(
                 f1_score(
                     y_true,
                     y_pred,
-                    pos_label=0,
+                    labels=labels,
+                    average="macro",
                     zero_division=0,
                 )
             ),
-            "tp": int(tp),
-            "fp": int(fp),
-            "fn": int(fn),
-            "tn": int(tn),
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "tn": tn,
+            "positive_label": positive_label,
+            "negative_label": negative_label,
+            "class_0_precision": class_0_precision,
+            "class_0_recall": class_0_recall,
+            "class_0_f1": class_0_f1,
+            "class_1_precision": class_1_precision,
+            "class_1_recall": class_1_recall,
+            "class_1_f1": class_1_f1,
+            "confusion_labels": labels,
+            "confusion_matrix": matrix.astype(int).tolist(),
+            "metric_convention_version": METRIC_CONVENTION_VERSION,
         })
+
+        if positive_class_name is not None:
+            result["positive_class"] = str(positive_class_name)
+
+        if positive_label == 0 and positive_class_name == "Fall":
+            result.update({
+                "fall_precision": class_0_precision,
+                "fall_recall": class_0_recall,
+                "fall_f1": class_0_f1,
+                "nonfall_precision": class_1_precision,
+                "nonfall_recall": class_1_recall,
+                "nonfall_f1": class_1_f1,
+            })
+
     else:
         labels = sorted(
             int(value)
@@ -236,7 +358,6 @@ def compute_metrics(y_true, y_pred):
             "per_class_counts": per_class_counts,
         })
     return result
-
 
 def compute_fixed_multiclass_metrics(
     y_true,
@@ -316,7 +437,13 @@ def compute_unified_mapped_metrics(y_true, y_pred):
     # Preserve the existing task coding: 0 = Fall, 1 = Non-Fall.
     fd_true = np.where(y_true <= 3, 0, 1)
     fd_pred = np.where(y_pred <= 3, 0, 1)
-    results["fall_detection"] = compute_metrics(fd_true, fd_pred)
+    positive_label, positive_class_name = metric_context_for_task("fall_detection")
+    results["fall_detection"] = compute_metrics(
+        fd_true,
+        fd_pred,
+        positive_label=positive_label,
+        positive_class_name=positive_class_name,
+    )
 
     specs = {
         "fall_type": ([0, 1, 2, 3], 0, 4),
@@ -401,7 +528,12 @@ def single_epoch(model, loader, criterion, optimizer):
     return total / len(loader)
 
 
-def evaluate_single(model, loader):
+def evaluate_single(
+    model,
+    loader,
+    positive_label=None,
+    positive_class_name=None,
+):
     model.eval()
     y_true, y_pred, y_prob = [], [], []
     with torch.no_grad():
@@ -410,7 +542,15 @@ def evaluate_single(model, loader):
             y_true.extend(y.numpy())
             y_pred.extend(probs.argmax(dim=1).cpu().numpy())
             y_prob.extend(probs.cpu().numpy())
-    return compute_metrics(y_true, y_pred), np.asarray(y_prob)
+    return (
+        compute_metrics(
+            y_true,
+            y_pred,
+            positive_label=positive_label,
+            positive_class_name=positive_class_name,
+        ),
+        np.asarray(y_prob),
+    )
 
 
 def multitask_loss(predictions, targets, criteria, tasks):
@@ -639,6 +779,7 @@ def _save_fold_cache(
             "fold": int(fold),
             "test_subject": str(subject),
             "samples": int(len(probabilities)),
+            "metric_convention_version": METRIC_CONVENTION_VERSION,
         },
     )
 
@@ -709,6 +850,8 @@ def train_classical(
     model_type,
     model_path=None,
     scaler_path=None,
+    positive_label=None,
+    positive_class_name=None,
 ):
     scaler = StandardScaler()
     X_train = scaler.fit_transform(
@@ -744,7 +887,15 @@ def train_classical(
         scaler_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(scaler, scaler_path)
 
-    return compute_metrics(y_test, predictions), probabilities
+    return (
+        compute_metrics(
+            y_test,
+            predictions,
+            positive_label=positive_label,
+            positive_class_name=positive_class_name,
+        ),
+        probabilities,
+    )
 
 
 def train_single_task(
@@ -769,6 +920,7 @@ def train_single_task(
     )
     valid = y_full != -1
     y = y_full[valid]
+    positive_label, positive_class_name = metric_context_for_task(task_name)
 
     if len(y) == 0:
         print(
@@ -863,6 +1015,8 @@ def train_single_task(
                     model_type,
                     model_path=cache_paths["model"],
                     scaler_path=cache_paths["scaler"],
+                    positive_label=positive_label,
+                    positive_class_name=positive_class_name,
                 )
                 _save_fold_cache(
                     save_dir,
@@ -1018,6 +1172,8 @@ def train_single_task(
                 metrics, probs = evaluate_single(
                     model,
                     test_loader,
+                    positive_label=positive_label,
+                    positive_class_name=positive_class_name,
                 )
                 _save_fold_cache(
                     save_dir,
@@ -1046,6 +1202,8 @@ def train_single_task(
             metrics = compute_metrics(
                 y[test_idx],
                 preds,
+                positive_label=positive_label,
+                positive_class_name=positive_class_name,
             )
             metrics.update(
                 {
@@ -2092,12 +2250,15 @@ def run_multitask(
             for task in tasks:
                 valid = y_test[task] >= 0
                 if valid.sum():
+                    positive_label, positive_class_name = metric_context_for_task(task)
                     metrics = compute_metrics(
                         y_test[task][valid],
                         np.argmax(
                             probs[task],
                             axis=1,
                         )[valid],
+                        positive_label=positive_label,
+                        positive_class_name=positive_class_name,
                     )
                 else:
                     metrics = {
@@ -2128,12 +2289,15 @@ def run_multitask(
                 valid = true >= 0
 
                 if valid.sum():
+                    positive_label, positive_class_name = metric_context_for_task(task)
                     metrics = compute_metrics(
                         true[valid],
                         np.argmax(
                             probs,
                             axis=1,
                         )[valid],
+                        positive_label=positive_label,
+                        positive_class_name=positive_class_name,
                     )
                 else:
                     metrics = {

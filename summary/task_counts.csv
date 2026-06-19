@@ -1,0 +1,17 @@
+window_seconds,stride_seconds,task,total_windows,valid_windows,ignored_windows
+2.0,1.0,y_classify_fall,34412,1608,32804
+2.0,1.0,y_classify_movement,34412,19741,14671
+2.0,1.0,y_classify_posture,34412,12534,21878
+2.0,1.0,y_classify_transition,34412,529,33883
+2.0,1.0,y_complete,34412,34412,0
+2.0,1.0,y_detect_fall,34412,34412,0
+2.0,1.0,y_detect_movement,34412,34412,0
+2.0,1.0,y_unified,34412,33883,529
+5.0,1.0,y_classify_fall,29894,1715,28179
+5.0,1.0,y_classify_movement,29894,17750,12144
+5.0,1.0,y_classify_posture,29894,10047,19847
+5.0,1.0,y_classify_transition,29894,382,29512
+5.0,1.0,y_complete,29894,29894,0
+5.0,1.0,y_detect_fall,29894,29894,0
+5.0,1.0,y_detect_movement,29894,29894,0
+5.0,1.0,y_unified,29894,29512,382

@@ -1,0 +1,100 @@
+[
+  {
+    "folder": "/home/caio-torkst/projects/tcc/IPqM-Fall/IPqM-Fall/windowed/2-sec_1-step",
+    "window_seconds": 2.0,
+    "stride_seconds": 1.0,
+    "total_learning_ready_windows": 34412,
+    "subjects": [
+      "ID1",
+      "ID10",
+      "ID11",
+      "ID12",
+      "ID13",
+      "ID14",
+      "ID15",
+      "ID2",
+      "ID3",
+      "ID4",
+      "ID6",
+      "ID7",
+      "ID8",
+      "ID9"
+    ],
+    "target_files": [
+      "y_classify_fall",
+      "y_classify_movement",
+      "y_classify_posture",
+      "y_classify_transition",
+      "y_complete",
+      "y_detect_fall",
+      "y_detect_movement",
+      "y_unified"
+    ],
+    "fall_detection_consistency": {
+      "values_on_fall_type_valid_windows": [
+        0
+      ],
+      "values_on_other_windows": [
+        1
+      ],
+      "mismatches_if_expected_0_is_fall": 0,
+      "mismatches_if_expected_1_is_fall": 34412
+    },
+    "metadata_file": "/home/caio-torkst/projects/tcc/IPqM-Fall/IPqM-Fall/windows_2_1.parquet",
+    "metadata_available": true,
+    "metadata_rows": 115812,
+    "synchronized_groups": 42603,
+    "complete_three_position_groups": 34412,
+    "incomplete_groups": 8191,
+    "complete_groups_with_label_disagreement": 2612
+  },
+  {
+    "folder": "/home/caio-torkst/projects/tcc/IPqM-Fall/IPqM-Fall/windowed/5-sec_1-step",
+    "window_seconds": 5.0,
+    "stride_seconds": 1.0,
+    "total_learning_ready_windows": 29894,
+    "subjects": [
+      "ID1",
+      "ID10",
+      "ID11",
+      "ID12",
+      "ID13",
+      "ID14",
+      "ID15",
+      "ID2",
+      "ID3",
+      "ID4",
+      "ID6",
+      "ID7",
+      "ID8",
+      "ID9"
+    ],
+    "target_files": [
+      "y_classify_fall",
+      "y_classify_movement",
+      "y_classify_posture",
+      "y_classify_transition",
+      "y_complete",
+      "y_detect_fall",
+      "y_detect_movement",
+      "y_unified"
+    ],
+    "fall_detection_consistency": {
+      "values_on_fall_type_valid_windows": [
+        0
+      ],
+      "values_on_other_windows": [
+        1
+      ],
+      "mismatches_if_expected_0_is_fall": 0,
+      "mismatches_if_expected_1_is_fall": 29894
+    },
+    "metadata_file": "/home/caio-torkst/projects/tcc/IPqM-Fall/IPqM-Fall/windows_5_1.parquet",
+    "metadata_available": true,
+    "metadata_rows": 101154,
+    "synchronized_groups": 37359,
+    "complete_three_position_groups": 29894,
+    "incomplete_groups": 7465,
+    "complete_groups_with_label_disagreement": 2253
+  }
+]

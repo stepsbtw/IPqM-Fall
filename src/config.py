@@ -5,7 +5,7 @@ DATASET_ROOT = Path("IPqM-Fall")
 RAW_DATASET_DIR = DATASET_ROOT / "raw"
 
 FS = 90
-WINDOW_SEC = 5
+WINDOW_SEC = 2
 STRIDE_SEC = 1
 
 WINDOW_SAMPLES = FS * WINDOW_SEC
@@ -34,13 +34,13 @@ EXPERIMENTS_TO_RUN = [
 ]
 
 TASK_MODELS_TO_RUN = [
-    #"CNN1Conv",
+#    "CNN1Conv",
     #"MLP",
-    "LOGREG",
+    #"LOGREG",
     #"RF",
     #"SVM",
     #"KNN",
-#    "LGBM",
+    "LGBM",
 ]
 
 TASK_MODALITIES_TO_RUN = [
@@ -51,20 +51,20 @@ TASK_MODALITIES_TO_RUN = [
 
 MODALITY_ABLATIONS = {
 #    "ACCELEROMETER": [0, 1, 2, 3],
-#    "GYROSCOPE": [4, 5, 6, 7],
+#   "GYROSCOPE": [4, 5, 6, 7],
     "FULL_IMU": [0, 1, 2, 3, 4, 5, 6, 7],
 }
 
 MULTI_TASK_MODEL = "CNN1Conv"
 
 UNIFIED_MODELS_TO_RUN = [
-#    "CNN1Conv",
-    #"MLP",
-    "LOGREG",
+ # "CNN1Conv",
+   #"MLP",
+   #"LOGREG",
    # "RF",
    # "SVM",
    # "KNN",
-#    "LGBM",
+   "LGBM",
 ]
 
 UNIFIED_MODALITIES_TO_RUN = [

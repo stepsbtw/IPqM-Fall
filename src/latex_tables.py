@@ -257,6 +257,14 @@ def load_records(results_root: Path) -> list[Record]:
 
 
 def score_metric(record: Record) -> str:
+    if record.task_key == "y_detect_fall":
+        # Fall Detection is operationally evaluated with Fall as the
+        # positive class (label 0).  Older result files may only contain
+        # generic f1_mean; fixed files include fall_f1_mean explicitly.
+        if "fall_f1_mean" in record.values:
+            return "fall_f1"
+        if "f1_mean" in record.values:
+            return "f1"
     return "f1" if "f1_mean" in record.values else "f1_macro"
 
 
@@ -405,7 +413,7 @@ def build_best_task_configurations(records: list[Record]) -> str:
 
     return "\n".join([
         r"\begin{table*}[t]",
-        r"\caption{Best observed complete pipeline for each prediction task. Binary F1 is reported for Fall Detection and Macro-F1 for the multiclass tasks.}",
+        r"\caption{Best observed complete pipeline for each prediction task. Fall-class F1 is reported for Fall Detection and Macro-F1 for the multiclass tasks.}",
         r"\label{tab:best_task_configurations}",
         r"\centering",
         r"\begin{tabularx}{\textwidth}{l X c}",
@@ -449,7 +457,7 @@ def build_model_comparison(records: list[Record]) -> str:
 
     return "\n".join([
         r"\begin{table*}[t]",
-        r"\caption{Complete best-observed cross-model summary. Each entry retains the strongest sensor and fusion configuration of that model at the corresponding window duration. Binary F1 is reported for Fall Detection and Macro-F1 for the multiclass tasks.}",
+        r"\caption{Complete best-observed cross-model summary. Each entry retains the strongest sensor and fusion configuration of that model at the corresponding window duration. Fall-class F1 is reported for Fall Detection and Macro-F1 for the multiclass tasks.}",
         r"\label{tab:main_all_models_comparison}",
         r"\centering",
         r"\begin{tabularx}{\textwidth}{X l X c X c}",
